@@ -11,6 +11,7 @@ description: >
   一个纯本地运行的 TUI 工具，用来管理和合并多个 mihomo/clash 兼容的订阅文件。
   参考 clash-verge-rev 的“订阅 + merge + 模板”思路，但不做桌面 GUI，仅做 TUI。
   用户可以添加多个订阅，选择一个模板，然后合并生成最终的 config.yaml，保存到本地，未来可推送到 mihomo/clash 的 external-controller。
+  支持附加 “base-config”（例如 clash-verge-rev 导出的 clash-verge.yaml），在 CLI 合并时继承端口/DNS/规则/代理分组等元数据，保证输出与 upstream 一致。
 
 ############################################################
 # 2. 技术栈要求
@@ -128,6 +129,7 @@ template_rules: |
   - 模板负责全局参数：端口、mode、allow-lan、log-level、external-controller、proxy-groups 框架
   - 订阅负责提供：proxies、proxy-groups(补充)、rules(补充)
   - 后续可引入简单变量替换（比如 {{secret}}），先预留接口，不必一次性实现
+  - 当用户指定 base-config 时，模板提供的结构在合并节点后再被 base-config 覆盖（端口、DNS、rules、proxy-groups 等），行为对齐 clash-verge-rev
 
 template_example: |
   # ~/.config/mihomo-tui/templates/default.yaml
@@ -184,6 +186,7 @@ rust_struct_clash_config: |
 merge_goal: >
   把 “一个模板” + “多个启用的订阅” 合成一个最终的 ClashConfig，
   合并时以模板为主，订阅只追加（proxies / rules），proxy-groups 要做按名字的合并或追加。
+  如果提供 base-config，还要在节点合并后复用 base-config 的端口、DNS、规则、代理分组等信息。
 merge_rules_detailed: |
   1. 读取模板 YAML -> ClashConfig (base)
   2. 读取所有 enabled=true 的订阅：
@@ -205,6 +208,11 @@ merge_rules_detailed: |
      - extra:
        对于 sub.extra 中的 key，如果模板里没有，就插入；有就保持模板
   4. 合并完成后，把所有 proxies 的名字收集起来，回填到默认的“🚀 节点选择”里（如果存在）
+  5. 如果用户提供 base-config：
+       - 端口 / socks-port / redir-port / tun / profile 等键以 base-config 为准（覆盖合并结果）
+       - rules 直接替换为 base-config 的 rules
+       - proxy-groups 结构沿用 base-config，proxies 列表用合并后的节点名称重建
+       - base-config 中的 dns/hosts/flatten key (extra) 覆盖或补齐输出
 
 merge_rust_skeleton: |
   pub fn merge(template: ClashConfig, subs: Vec<ClashConfig>) -> ClashConfig {
@@ -367,6 +375,8 @@ notes: |
   - 错误要能回传到 TUI，用一个简单的 status 字段显示
   - 代码要能在 NixOS 上编译，尽量避免奇怪的系统依赖
   - 不需要 tauri / gtk / electron，只要终端
+  - CLI 启动时需要检查 `~/.config/mihomo-tui/resources/`，若缺失则自动下载 `Country.mmdb` / `geoip.dat` / `geosite.dat`，与 clash-verge-rev 行为保持一致
+  - 项目内提供 `resources/base-config.example.yaml` 说明 base-config 结构，实际使用可通过 `--base-config` 指向真实配置文件
 
 ############################################################
 # 13. 你可以直接丢给 codex 的一句话
@@ -375,4 +385,3 @@ codex_prompt_stub: |
   请按上面这份规格说明创建一个 Rust workspace，先生成 crates/core 的代码，再生成 crates/tui，
   保证能 cargo build，通过简单的 TUI 列表看到 mock 的订阅列表，
   并且实现模板 + 多订阅的合并函数。
-

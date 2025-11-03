@@ -1,0 +1,15 @@
+# Example base configuration for mihomo-cli (--base-config)
+# Replace the placeholders with a real Clash/Mihomo config (e.g., clash-verge.yaml)
+# to inherit ports, DNS, rules, and proxy-groups when merging subscriptions.
+port: 7890
+socks-port: 7891
+redir-port: 7892
+mode: Rule
+log-level: info
+allow-lan: true
+proxy-groups:
+  - name: ExampleGroup
+    type: select
+    proxies: []
+rules:
+  - MATCH,ExampleGroup
