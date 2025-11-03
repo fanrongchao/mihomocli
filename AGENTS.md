@@ -5,6 +5,11 @@ The workspace centers around `Cargo.toml` with two members: `crates/core` for do
 
 Resource bundles (`Country.mmdb`, `geoip.dat`, `geosite.dat`) mirror clash-verge-rev behaviour and live under `~/.config/mihomo-tui/resources/`; refresh logic should stay compatible with upstream URLs.
 
+CLI subscriptions recognise both Clash-ready YAML and the typical base64/share-link
+formats (trojan/vmess/shadowsocks). Parsing helpers live in
+`crates/core/src/subscription/parser.rs`; extend them if upstream adds new link
+types.
+
 ## Build, Test, and Development Commands
 - `cargo build` compiles the entire workspace. Use `cargo build -p core` or `-p tui` for crate-specific checks.
 - `cargo run -p tui` launches the TUI with mock data or the current config files.
