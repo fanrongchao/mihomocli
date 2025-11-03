@@ -3,6 +3,8 @@
 ## Project Structure & Module Organization
 The workspace centers around `Cargo.toml` with two members: `crates/core` for domain logic and `crates/tui` for the terminal UI binary. Core exposes modules such as `model.rs`, `subscription.rs`, `template.rs`, `merge.rs`, `output.rs`, and `storage.rs`; keep new shared utilities here. The TUI crate owns `main.rs`, `app.rs`, `ui.rs`, `events.rs`, and the `screens/` directory (`home.rs`, `subscriptions.rs`, `subscription_detail.rs`, `merge_preview.rs`). Place reusable examples or starter templates in `examples/`, and reserve `~/.config/mihomo-tui` and `~/.cache/mihomo-tui` for runtime artifacts only.
 
+Resource bundles (`Country.mmdb`, `geoip.dat`, `geosite.dat`) mirror clash-verge-rev behaviour and live under `~/.config/mihomo-tui/resources/`; refresh logic should stay compatible with upstream URLs.
+
 ## Build, Test, and Development Commands
 - `cargo build` compiles the entire workspace. Use `cargo build -p core` or `-p tui` for crate-specific checks.
 - `cargo run -p tui` launches the TUI with mock data or the current config files.

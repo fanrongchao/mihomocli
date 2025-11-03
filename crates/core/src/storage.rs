@@ -29,6 +29,10 @@ impl AppPaths {
         self.config_dir.join("templates")
     }
 
+    pub fn resources_dir(&self) -> PathBuf {
+        self.config_dir.join("resources")
+    }
+
     pub fn app_config_path(&self) -> PathBuf {
         self.config_dir.join("app.yaml")
     }
@@ -56,11 +60,16 @@ impl AppPaths {
     pub async fn ensure_runtime_dirs(&self) -> anyhow::Result<()> {
         fs::create_dir_all(self.config_dir()).await?;
         fs::create_dir_all(self.templates_dir()).await?;
+        fs::create_dir_all(self.resources_dir()).await?;
         if let Some(parent) = self.output_config_path().parent() {
             fs::create_dir_all(parent).await?;
         }
         fs::create_dir_all(self.cache_dir()).await?;
         Ok(())
+    }
+
+    pub fn resource_file<S: AsRef<str>>(&self, name: S) -> PathBuf {
+        self.resources_dir().join(name.as_ref())
     }
 }
 

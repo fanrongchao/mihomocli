@@ -34,6 +34,7 @@ Runtime directories (auto-created):
 - Subscriptions list: `~/.config/mihomo-tui/subscriptions.yaml`
 - Cache: `~/.cache/mihomo-tui/subscriptions/`
 - Output: `~/.config/mihomo-tui/output/config.yaml`
+- Resources (Country.mmdb, geoip.dat, geosite.dat): `~/.config/mihomo-tui/resources/`
 
 ## Examples
 

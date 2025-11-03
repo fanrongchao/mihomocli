@@ -1,11 +1,13 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use clap::{Args, Parser, Subcommand};
 use mihomo_core::output::{ConfigDeployer, FileDeployer};
 use mihomo_core::storage::{self, AppPaths, SubscriptionList};
 use mihomo_core::subscription::{Subscription, SubscriptionKind};
 use mihomo_core::{merge_configs, Template};
+use tokio::fs;
+use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -66,15 +68,17 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
     let paths = AppPaths::new()?;
     paths.ensure_runtime_dirs().await?;
 
+    let client = reqwest::Client::builder()
+        .user_agent("mihomo-cli/0.1")
+        .build()?;
+
+    ensure_mihomo_resources(&client, &paths).await?;
+
     let template_path = resolve_template_path(&paths, &args.template);
     let template = Template::load(&template_path)
         .await
         .with_context(|| format!("failed to load template from {}", template_path.display()))?
         .into_config();
-
-    let client = reqwest::Client::builder()
-        .user_agent("mihomo-cli/0.1")
-        .build()?;
 
     let mut subscription_list = if let Some(path) = args.subscriptions_file.as_ref() {
         load_subscriptions_from_path(path).await?
@@ -188,7 +192,7 @@ fn url_name(input: &str) -> Option<String> {
 }
 
 async fn load_subscriptions_from_path(path: &Path) -> anyhow::Result<SubscriptionList> {
-    match tokio::fs::read_to_string(path).await {
+    match fs::read_to_string(path).await {
         Ok(contents) => Ok(serde_yaml::from_str(&contents)?),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(SubscriptionList::default()),
         Err(err) => Err(err.into()),
@@ -197,8 +201,48 @@ async fn load_subscriptions_from_path(path: &Path) -> anyhow::Result<Subscriptio
 
 async fn save_subscriptions_to_path(path: &Path, list: &SubscriptionList) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
+        fs::create_dir_all(parent).await?;
     }
-    tokio::fs::write(path, serde_yaml::to_string(list)?).await?;
+    fs::write(path, serde_yaml::to_string(list)?).await?;
+    Ok(())
+}
+
+const RESOURCE_SOURCES: &[(&str, &str)] = &[
+    (
+        "Country.mmdb",
+        "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/country.mmdb",
+    ),
+    (
+        "geoip.dat",
+        "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat",
+    ),
+    (
+        "geosite.dat",
+        "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat",
+    ),
+];
+
+async fn ensure_mihomo_resources(client: &reqwest::Client, paths: &AppPaths) -> anyhow::Result<()> {
+    for (name, url) in RESOURCE_SOURCES.iter() {
+        let target = paths.resource_file(name);
+
+        if fs::try_exists(&target).await.unwrap_or(false) {
+            continue;
+        }
+
+        info!(resource = %name, "downloading resource");
+        let response = client.get(*url).send().await?;
+        if !response.status().is_success() {
+            warn!(resource = %name, status = ?response.status(), "failed to download resource");
+            return Err(anyhow!("failed to download {name} from {url}"));
+        }
+
+        let bytes = response.bytes().await?;
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        fs::write(&target, &bytes).await?;
+    }
+
     Ok(())
 }
