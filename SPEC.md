@@ -377,6 +377,7 @@ notes: |
   - 不需要 tauri / gtk / electron，只要终端
   - CLI 启动时需要检查 `~/.config/mihomo-tui/resources/`，若缺失则自动下载 `Country.mmdb` / `geoip.dat` / `geosite.dat`，与 clash-verge-rev 行为保持一致
   - 项目内提供 `resources/base-config.example.yaml` 说明 base-config 结构，实际使用可通过 `--base-config` 指向真实配置文件
+  - **未来工作**：如需完全复刻 clash-verge-rev 的最终 YAML 生成流程，需要移植其增强模板（rules/proxy-groups/scripts）和 runtime 配置合并逻辑；当前版本通过引用现有的 base-config 来达成等价输出
 
 ############################################################
 # 13. 你可以直接丢给 codex 的一句话

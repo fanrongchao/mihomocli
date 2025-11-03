@@ -15,6 +15,10 @@ CLI at an exported config via `--base-config`; `merge::apply_base_config` reuses
 ports/dns/rules/group metadata so the generated YAML mirrors the upstream final
 output.
 
+- `TODO`: Supporting full clash-verge-rev behaviour (without requiring a user-supplied
+  base config) would involve porting its profile enhancements, rule templates, and
+  runtime config merging logic. For now, rely on `~/.config/mihomo-tui/base-config.yaml`.
+
 ## Build, Test, and Development Commands
 - `cargo build` compiles the entire workspace. Use `cargo build -p core` or `-p tui` for crate-specific checks.
 - `cargo run -p tui` launches the TUI with mock data or the current config files.
