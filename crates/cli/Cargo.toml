@@ -1,0 +1,18 @@
+[package]
+name = "mihomo-cli"
+version = "0.1.0"
+edition = "2021"
+authors = ["mihomo-tui contributors"]
+license = "MIT"
+description = "Command line interface for mihomo subscription merging"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+mihomo-core = { path = "../core" }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

@@ -1,0 +1,12 @@
+proxies:
+  - name: "Sample Node"
+    type: http
+    server: example.com
+    port: 443
+proxy-groups:
+  - name: "🚀 节点选择"
+    type: select
+    proxies:
+      - "Sample Node"
+rules:
+  - DOMAIN-SUFFIX,example.com,🚀 节点选择
