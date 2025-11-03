@@ -28,6 +28,8 @@ mihomo-cli merge \
   --output ~/.config/mihomo-tui/output/config.yaml
 ```
 
+If ~/.config/mihomo-tui/base-config.yaml exists, mihomo-cli will detect it automatically so the command can omit --base-config.
+
 ## Repository Layout
 - `crates/core`: Clash models, merge logic, subscription parsing, storage helpers
 - `crates/cli`: Command-line interface, argument handling, file deployment

@@ -84,8 +84,13 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
         .with_context(|| format!("failed to load template from {}", template_path.display()))?
         .into_config();
 
-    let base_config = if let Some(base_path) = args.base_config.as_ref() {
-        let path = resolve_base_path(&paths, base_path);
+    let base_config_path = args
+        .base_config
+        .as_ref()
+        .map(|p| resolve_base_path(&paths, p))
+        .or_else(|| default_base_config_path(&paths));
+
+    let base_config = if let Some(path) = base_config_path {
         Some(
             Template::load(&path)
                 .await
@@ -180,6 +185,15 @@ fn resolve_base_path(paths: &AppPaths, provided: &Path) -> PathBuf {
         } else {
             provided.to_path_buf()
         }
+    }
+}
+
+fn default_base_config_path(paths: &AppPaths) -> Option<PathBuf> {
+    let candidate = paths.config_dir().join("base-config.yaml");
+    if candidate.exists() {
+        Some(candidate)
+    } else {
+        None
     }
 }
 
