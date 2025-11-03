@@ -4,17 +4,26 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
     flake-utils.url = "github:numtide/flake-utils";
+    rust-overlay.url = "github:oxalica/rust-overlay";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, rust-overlay }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ (import rust-overlay) ];
+        };
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
           extensions = [ "rustfmt" "clippy" ];
         };
 
-        mihomo-cli = pkgs.rustPlatform.buildRustPackage {
+        rustPlatform = pkgs.makeRustPlatform {
+          cargo = rustToolchain;
+          rustc = rustToolchain;
+        };
+
+        mihomo-cli = rustPlatform.buildRustPackage {
           pname = "mihomo-cli";
           version = "0.1.0";
           src = ./.;
@@ -29,7 +38,10 @@
           ];
         };
       in {
-        packages.default = mihomo-cli;
+        packages = {
+          default = mihomo-cli;
+          mihomo-cli = mihomo-cli;
+        };
         devShells.default = pkgs.mkShell {
           nativeBuildInputs = [
             rustToolchain
