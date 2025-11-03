@@ -10,12 +10,15 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
-        rustToolchain = pkgs.rust-bin.stable.latest.default;
+        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
+          extensions = [ "rustfmt" "clippy" ];
+        };
       in {
         devShells.default = pkgs.mkShell {
           nativeBuildInputs = [
             rustToolchain
             pkgs.pkg-config
+            pkgs.rust-analyzer
           ];
           buildInputs = [
             pkgs.openssl
