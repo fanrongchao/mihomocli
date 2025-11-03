@@ -14,21 +14,22 @@
 # Build
 cargo build -p mihomo-cli
 
-# Merge with template and subscription share link
+# Merge with template and subscription share link (output defaults to
+# ~/.config/mihomo-tui/output/config.yaml)
 mihomo-cli merge \ 
   --template examples/template.yaml \ 
-  --subscription "https://example.com/subscription" \ 
-  --stdout
+  --subscription "https://example.com/subscription"
 
-# Merge while inheriting an existing clash config (e.g., clash-verge.yaml)
-mihomo-cli merge \ 
-  --template examples/template.yaml \ 
-  --base-config resources/base-config.example.yaml \ 
-  --subscription https://example.com/subscription \ 
-  --output ~/.config/mihomo-tui/output/config.yaml
+# Want clash-verge-rev parity? Drop your clash-verge.yaml at
+# ~/.config/mihomo-tui/base-config.yaml (or pass --base-config) so ports/dns/
+# rules/groups are inherited automatically.
 ```
 
-If ~/.config/mihomo-tui/base-config.yaml exists, mihomo-cli will detect it automatically so the command can omit --base-config.
+Run Mihomo with the generated configuration and resources:
+
+```bash
+mihomo -d ~/.config/mihomo-tui/resources -f ~/.config/mihomo-tui/output/config.yaml
+```
 
 ## Repository Layout
 - `crates/core`: Clash models, merge logic, subscription parsing, storage helpers

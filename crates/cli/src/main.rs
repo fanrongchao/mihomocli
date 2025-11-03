@@ -143,6 +143,7 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
             .output
             .clone()
             .unwrap_or_else(|| paths.output_config_path());
+        ensure_parent(&output_path).await?;
         let deployer = FileDeployer {
             path: output_path.clone(),
         };
@@ -189,12 +190,19 @@ fn resolve_base_path(paths: &AppPaths, provided: &Path) -> PathBuf {
 }
 
 fn default_base_config_path(paths: &AppPaths) -> Option<PathBuf> {
-    let candidate = paths.config_dir().join("base-config.yaml");
+    let candidate = paths.app_config_path().with_file_name("base-config.yaml");
     if candidate.exists() {
         Some(candidate)
     } else {
         None
     }
+}
+
+async fn ensure_parent(path: &Path) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).await?;
+    }
+    Ok(())
 }
 
 fn subscription_from_input(index: usize, input: &str) -> Subscription {

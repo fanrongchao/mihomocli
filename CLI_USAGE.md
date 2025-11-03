@@ -35,7 +35,7 @@ Runtime directories (auto-created):
 - Subscriptions list: `~/.config/mihomo-tui/subscriptions.yaml`
 - Cache: `~/.cache/mihomo-tui/subscriptions/`
 - Output: `~/.config/mihomo-tui/output/config.yaml`
-- Resources (Country.mmdb, geoip.dat, geosite.dat): `~/.config/mihomo-tui/resources/`
+- Resources (Country.mmdb, geoip.dat, geosite.dat): `~/.config/mihomo-tui/resources/` (use `mihomo -d ~/.config/mihomo-tui/resources ...`)
 
 The CLI accepts Clash YAML subscriptions directly, but it can also decode common
 link-based feeds (trojan/vmess/shadowsocks) even when they are delivered via
