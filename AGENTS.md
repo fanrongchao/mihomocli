@@ -10,6 +10,11 @@ formats (trojan/vmess/shadowsocks). Parsing helpers live in
 `crates/core/src/subscription/parser.rs`; extend them if upstream adds new link
 types.
 
+When working alongside an existing clash-verge-rev setup, developers can point the
+CLI at an exported config via `--base-config`; `merge::apply_base_config` reuses
+ports/dns/rules/group metadata so the generated YAML mirrors the upstream final
+output.
+
 ## Build, Test, and Development Commands
 - `cargo build` compiles the entire workspace. Use `cargo build -p core` or `-p tui` for crate-specific checks.
 - `cargo run -p tui` launches the TUI with mock data or the current config files.

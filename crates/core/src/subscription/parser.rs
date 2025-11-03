@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
 use anyhow::{anyhow, Context};
+use std::collections::HashSet;
+
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
 use percent_encoding::percent_decode_str;
@@ -21,17 +23,20 @@ pub fn parse_subscription_payload(raw: &str) -> anyhow::Result<ClashConfig> {
         return Ok(config);
     }
 
-    // Try base64 decoding; keep the best-effort decoded text if it looks valid.
-    if let Some(decoded) = try_decode_base64(raw) {
-        if let Ok(config) = serde_yaml::from_str::<ClashConfig>(&decoded) {
-            return Ok(config);
-        }
-        if let Some(config) = parse_share_links(&decoded)? {
+    let mut decoded_candidates = decode_candidates(raw);
+
+    for candidate in decoded_candidates.iter() {
+        if let Ok(config) = serde_yaml::from_str::<ClashConfig>(candidate) {
             return Ok(config);
         }
     }
 
-    // Finally, interpret the original text as share links.
+    for candidate in decoded_candidates.drain(..) {
+        if let Some(config) = parse_share_links(&candidate)? {
+            return Ok(config);
+        }
+    }
+
     if let Some(config) = parse_share_links(raw)? {
         return Ok(config);
     }
@@ -39,40 +44,48 @@ pub fn parse_subscription_payload(raw: &str) -> anyhow::Result<ClashConfig> {
     Err(anyhow!("subscription payload is neither valid Clash YAML nor supported share links"))
 }
 
-fn try_decode_base64(raw: &str) -> Option<String> {
+fn decode_candidates(raw: &str) -> Vec<String> {
     let filtered: String = raw.chars().filter(|c| !c.is_ascii_whitespace()).collect();
     if filtered.is_empty() {
-        return None;
+        return Vec::new();
     }
 
-    // Try standard base64 first.
-    if let Ok(bytes) = STANDARD.decode(&filtered) {
-        if let Ok(text) = String::from_utf8(bytes) {
-            if looks_like_share_links(&text) {
-                return Some(text);
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+
+    for decoded in [STANDARD.decode(&filtered), URL_SAFE_NO_PAD.decode(&filtered)] {
+        if let Ok(bytes) = decoded {
+            if bytes.is_empty() {
+                continue;
+            }
+            if let Ok(text) = String::from_utf8(bytes) {
+                if is_mostly_printable(&text) && seen.insert(text.clone()) {
+                    out.push(text);
+                }
             }
         }
     }
 
-    // Some subscriptions use URL-safe alphabet without padding.
-    if let Ok(bytes) = URL_SAFE_NO_PAD.decode(&filtered) {
-        if let Ok(text) = String::from_utf8(bytes) {
-            if looks_like_share_links(&text) {
-                return Some(text);
-            }
-        }
-    }
-
-    None
+    out
 }
 
-fn looks_like_share_links(text: &str) -> bool {
-    text.lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            (!line.is_empty()).then_some(line)
-        })
-        .any(|line| line.contains("://"))
+fn is_mostly_printable(text: &str) -> bool {
+    let mut printable = 0usize;
+    let mut control = 0usize;
+
+    for ch in text.chars() {
+        if ch.is_ascii_control() && ch != '\n' && ch != '\r' && ch != '\t' {
+            control += 1;
+        } else {
+            printable += 1;
+        }
+
+        if control > 8 {
+            return false;
+        }
+    }
+
+    printable > 0
 }
 
 fn parse_share_links(input: &str) -> anyhow::Result<Option<ClashConfig>> {
@@ -132,6 +145,7 @@ fn parse_trojan(line: &str) -> anyhow::Result<Option<Value>> {
     insert_string(&mut map, "server", server);
     insert_u64(&mut map, "port", port as u64);
     insert_string(&mut map, "password", password);
+    map.insert(Value::from("udp"), Value::Bool(true));
 
     let query: HashMap<_, _> = url.query_pairs().collect();
 
@@ -219,6 +233,7 @@ fn parse_vmess(line: &str) -> anyhow::Result<Option<Value>> {
     insert_string(&mut map, "server", server);
     insert_u64(&mut map, "port", port as u64);
     insert_string(&mut map, "uuid", uuid);
+    map.insert(Value::from("udp"), Value::Bool(true));
 
     if let Some(alter_id) = data
         .get("aid")
@@ -346,6 +361,7 @@ fn parse_shadowsocks(line: &str) -> anyhow::Result<Option<Value>> {
     insert_u64(&mut map, "port", port as u64);
     insert_string(&mut map, "cipher", method);
     insert_string(&mut map, "password", password);
+    map.insert(Value::from("udp"), Value::Bool(true));
 
     if let Some(plugin) = plugin {
         if let Some((_, opts)) = plugin.split_once("plugin=") {

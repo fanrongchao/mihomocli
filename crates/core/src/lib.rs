@@ -5,6 +5,6 @@ pub mod storage;
 pub mod subscription;
 pub mod template;
 
-pub use merge::merge_configs;
+pub use merge::{apply_base_config, merge_configs};
 pub use model::ClashConfig;
 pub use template::Template;

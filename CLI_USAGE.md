@@ -22,6 +22,7 @@ mihomo-cli merge --template <template_path> [OPTIONS]
 
 Key flags:
 - `--template <PATH>`: Template YAML file. Relative paths resolve under `~/.config/mihomo-tui/templates/`.
+- `--base-config <PATH>`: Optional Clash config whose ports/dns/rules/group metadata should be inherited (e.g., `clash-verge.yaml`).
 - `--subscriptions-file <PATH>`: Custom subscriptions list (defaults to `~/.config/mihomo-tui/subscriptions.yaml`).
 - `-s, --subscription <SRC>`: Extra source (URL or local YAML). Repeatable.
 - `--output <PATH>`: Destination for merged config. Defaults to `~/.config/mihomo-tui/output/config.yaml`.

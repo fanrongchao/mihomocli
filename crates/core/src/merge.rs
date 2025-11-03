@@ -30,6 +30,39 @@ pub fn merge_configs(template: ClashConfig, subs: Vec<ClashConfig>) -> ClashConf
     out
 }
 
+pub fn apply_base_config(mut merged: ClashConfig, base: &ClashConfig) -> ClashConfig {
+    if let Some(port) = base.port {
+        merged.port = Some(port);
+    }
+    if let Some(socks) = base.socks_port {
+        merged.socks_port = Some(socks);
+    }
+    if let Some(redir) = base.redir_port {
+        merged.redir_port = Some(redir);
+    }
+
+    let mut extra = base.extra.clone();
+    for (key, value) in merged.extra.into_iter() {
+        extra.insert(key, value);
+    }
+    merged.extra = extra;
+
+    if !base.rules.is_empty() {
+        merged.rules = base.rules.clone();
+    }
+
+    if !base.proxy_groups.is_empty() {
+        let names = merged.proxy_names();
+        let mut rebuilt = Vec::with_capacity(base.proxy_groups.len());
+        for group in &base.proxy_groups {
+            rebuilt.push(rebuild_group(group, &names));
+        }
+        merged.proxy_groups = rebuilt;
+    }
+
+    merged
+}
+
 fn merge_proxy_groups(mut base: Vec<Value>, incoming: Vec<Value>) -> Vec<Value> {
     for group in incoming.into_iter() {
         match proxy_group_name(&group) {
@@ -136,6 +169,24 @@ fn collect_proxy_names(values: &[Value], dest: &mut Vec<String>, seen: &mut Hash
     }
 }
 
+fn rebuild_group(group: &Value, proxy_names: &[String]) -> Value {
+    let Some(map) = group.as_mapping() else {
+        return group.clone();
+    };
+
+    let mut rebuilt = map.clone();
+    let proxies_key = Value::from("proxies");
+    let new_list = proxy_names
+        .iter()
+        .cloned()
+        .map(Value::from)
+        .collect::<Vec<_>>();
+
+    rebuilt.insert(proxies_key, Value::Sequence(new_list));
+
+    Value::Mapping(rebuilt)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,5 +274,31 @@ mod tests {
 
         let merged = merge_configs(template, vec![sub]);
         assert_eq!(merged.rules, vec!["RULE,TEMPLATE", "RULE,SUB"]);
+    }
+
+    #[test]
+    fn test_apply_base_config_overrides_rules_and_groups() {
+        let mut base = ClashConfig::default();
+        base.port = Some(8000);
+        base.rules = vec!["BASE_RULE".to_string()];
+        base.proxy_groups = vec![selector_group("BaseGroup", &[])] ;
+        base.extra.insert("profile".into(), Value::from("store"));
+
+        let mut merged = ClashConfig::default();
+        merged.proxies.push(proxy("X"));
+        merged.rules = vec!["MERGED_RULE".to_string()];
+
+        let result = apply_base_config(merged, &base);
+        assert_eq!(result.port, Some(8000));
+        assert_eq!(result.rules, vec!["BASE_RULE".to_string()]);
+        assert_eq!(result.proxy_groups.len(), 1);
+        let group = result.proxy_groups[0].as_mapping().unwrap();
+        let proxies = group
+            .get(&Value::from("proxies"))
+            .and_then(|v| v.as_sequence())
+            .unwrap();
+        assert_eq!(proxies.len(), 1);
+        assert_eq!(proxies[0].as_str(), Some("X"));
+        assert_eq!(result.extra.get("profile").and_then(Value::as_str), Some("store"));
     }
 }

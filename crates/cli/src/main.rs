@@ -28,6 +28,10 @@ struct MergeArgs {
     #[arg(long)]
     template: PathBuf,
 
+    /// Optional base config to inherit fields/rules from (e.g., clash-verge.yaml).
+    #[arg(long)]
+    base_config: Option<PathBuf>,
+
     /// Optional subscriptions YAML definition (defaults to ~/.config/mihomo-tui/subscriptions.yaml).
     #[arg(long)]
     subscriptions_file: Option<PathBuf>,
@@ -80,6 +84,18 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
         .with_context(|| format!("failed to load template from {}", template_path.display()))?
         .into_config();
 
+    let base_config = if let Some(base_path) = args.base_config.as_ref() {
+        let path = resolve_base_path(&paths, base_path);
+        Some(
+            Template::load(&path)
+                .await
+                .with_context(|| format!("failed to load base config from {}", path.display()))?
+                .into_config(),
+        )
+    } else {
+        None
+    };
+
     let mut subscription_list = if let Some(path) = args.subscriptions_file.as_ref() {
         load_subscriptions_from_path(path).await?
     } else {
@@ -109,7 +125,10 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
         }
     }
 
-    let merged = merge_configs(template, configs);
+    let mut merged = merge_configs(template, configs);
+    if let Some(base) = base_config.as_ref() {
+        merged = mihomo_core::merge::apply_base_config(merged, base);
+    }
     let yaml = merged.to_yaml_string()?;
 
     if args.stdout {
@@ -143,6 +162,19 @@ fn resolve_template_path(paths: &AppPaths, provided: &Path) -> PathBuf {
         provided.to_path_buf()
     } else {
         let candidate = paths.templates_dir().join(provided);
+        if candidate.exists() {
+            candidate
+        } else {
+            provided.to_path_buf()
+        }
+    }
+}
+
+fn resolve_base_path(paths: &AppPaths, provided: &Path) -> PathBuf {
+    if provided.is_absolute() {
+        provided.to_path_buf()
+    } else {
+        let candidate = paths.config_dir().join(provided);
         if candidate.exists() {
             candidate
         } else {
