@@ -115,3 +115,51 @@ pub async fn save_subscription_list(
     fs::write(paths.subscriptions_file(), yaml).await?;
     Ok(())
 }
+
+// App configuration (simple key-value plus custom rules)
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AppConfig {
+    #[serde(default)]
+    pub last_subscription_url: Option<String>,
+
+    #[serde(default)]
+    pub custom_rules: Vec<CustomRule>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RuleKind {
+    Domain,
+    DomainSuffix,
+    DomainKeyword,
+}
+
+fn default_rule_kind() -> RuleKind {
+    RuleKind::DomainSuffix
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CustomRule {
+    pub domain: String,
+    #[serde(default = "default_rule_kind")]
+    pub kind: RuleKind,
+    pub via: String,
+}
+
+pub async fn load_app_config(paths: &AppPaths) -> anyhow::Result<AppConfig> {
+    match fs::read_to_string(paths.app_config_path()).await {
+        Ok(raw) => Ok(serde_yaml::from_str(&raw)?),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(AppConfig::default()),
+        Err(err) => Err(err.into()),
+    }
+}
+
+pub async fn save_app_config(paths: &AppPaths, cfg: &AppConfig) -> anyhow::Result<()> {
+    if let Some(parent) = paths.app_config_path().parent() {
+        fs::create_dir_all(parent).await?;
+    }
+    let yaml = serde_yaml::to_string(cfg)?;
+    fs::write(paths.app_config_path(), yaml).await?;
+    Ok(())
+}

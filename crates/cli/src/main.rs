@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Context};
 use clap::{Args, Parser, Subcommand};
 use mihomo_core::output::{ConfigDeployer, FileDeployer};
-use mihomo_core::storage::{self, AppPaths, SubscriptionList};
+use mihomo_core::storage::{self, AppConfig, AppPaths, CustomRule, RuleKind, SubscriptionList};
 use mihomo_core::subscription::{Subscription, SubscriptionKind};
 use mihomo_core::{merge_configs, Template};
 use tokio::fs;
@@ -75,6 +75,10 @@ Notes:
 "#
     )]
     Merge(MergeArgs),
+
+    /// Show or manage cached state and quick rules
+    #[command(subcommand)]
+    Manage(Manage),
 }
 
 // Note: default clap styles are used to avoid introducing extra dependencies
@@ -124,6 +128,7 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Merge(args) => run_merge(args).await?,
+        Commands::Manage(cmd) => run_manage(cmd).await?,
     }
 
     Ok(())
@@ -138,6 +143,7 @@ fn init_tracing() {
 async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
     let paths = AppPaths::new()?;
     paths.ensure_runtime_dirs().await?;
+    let mut app_cfg = storage::load_app_config(&paths).await?;
 
     // Mimic clash-verge UA so some providers return Clash YAML (with rules)
     let ua = args
@@ -186,6 +192,7 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
     };
 
     let mut configs = Vec::new();
+    let mut used_url: Option<String> = None;
 
     for subscription in subscription_list.items.iter_mut() {
         match subscription.load_config(&client, &paths).await {
@@ -194,6 +201,9 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
             Err(err) => {
                 tracing::error!(id = %subscription.id, error = %err, "failed to load subscription");
             }
+        }
+        if let Some(url) = subscription.url.clone() {
+            used_url = Some(url);
         }
     }
 
@@ -206,12 +216,52 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
                 tracing::error!(source = source, error = %err, "failed to load ad-hoc subscription");
             }
         }
+        if let Some(url) = subscription.url.clone() {
+            used_url = Some(url);
+        }
+    }
+
+    // If still no configs and no sources, try last cached subscription URL
+    if configs.is_empty() && args.subscriptions.is_empty() && subscription_list.items.is_empty() {
+        if let Some(last_url) = app_cfg.last_subscription_url.clone() {
+            tracing::info!(last_url = %last_url, "no subscriptions provided; using cached last subscription URL");
+            let mut subscription = subscription_from_input(0, &last_url);
+            match subscription.load_config(&client, &paths).await {
+                Ok(Some(config)) => {
+                    configs.push(config);
+                    used_url = Some(last_url);
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    return Err(anyhow!("failed to load cached subscription {}: {}", last_url, err));
+                }
+            }
+        } else {
+            return Err(anyhow!("no subscriptions provided and no cached last subscription URL found. Provide -s/--subscription or set one previously."));
+        }
     }
 
     let mut merged = merge_configs(template, configs);
     if let Some(base) = base_config.as_ref() {
         merged = mihomo_core::merge::apply_base_config(merged, base);
     }
+
+    // Prepend custom quick rules (take precedence)
+    if !app_cfg.custom_rules.is_empty() {
+        let mut quick = Vec::with_capacity(app_cfg.custom_rules.len());
+        for r in &app_cfg.custom_rules {
+            let tag = match r.kind {
+                RuleKind::Domain => "DOMAIN",
+                RuleKind::DomainSuffix => "DOMAIN-SUFFIX",
+                RuleKind::DomainKeyword => "DOMAIN-KEYWORD",
+            };
+            quick.push(format!("{},{},{}", tag, r.domain, r.via));
+        }
+        let mut new_rules = quick;
+        new_rules.extend(merged.rules.into_iter());
+        merged.rules = new_rules;
+    }
+
     let yaml = merged.to_yaml_string()?;
 
     if args.stdout {
@@ -235,6 +285,12 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
         storage::save_subscription_list(&paths, &subscription_list).await?;
     } else if let Some(custom) = args.subscriptions_file.as_ref() {
         save_subscriptions_to_path(custom, &subscription_list).await?;
+    }
+
+    // Update caches after successful merge
+    if let Some(url) = used_url.take() {
+        app_cfg.last_subscription_url = Some(url);
+        storage::save_app_config(&paths, &app_cfg).await?;
     }
 
     Ok(())
@@ -375,5 +431,144 @@ async fn ensure_mihomo_resources(client: &reqwest::Client, paths: &AppPaths) -> 
         fs::write(&target, &bytes).await?;
     }
 
+    Ok(())
+}
+
+// Management commands (cache and custom rules)
+
+#[derive(Subcommand)]
+enum Manage {
+    /// Show or clear the cached last subscription URL
+    #[command(subcommand)]
+    Cache(CacheCmd),
+
+    /// Manage quick custom rules that force domains via a specific proxy
+    #[command(subcommand)]
+    Custom(CustomCmd),
+}
+
+#[derive(Subcommand)]
+enum CacheCmd {
+    /// Show the cached last subscription URL
+    Show,
+    /// Clear the cached last subscription URL
+    Clear,
+}
+
+#[derive(Subcommand)]
+enum CustomCmd {
+    /// Add a custom rule
+    Add(CustomAddArgs),
+    /// List custom rules
+    List,
+    /// Remove custom rules matching domain (and optionally via)
+    Remove(CustomRemoveArgs),
+}
+
+#[derive(Args)]
+struct CustomAddArgs {
+    /// Domain to match (e.g., cache.nixos.org)
+    #[arg(long)]
+    domain: String,
+    /// Proxy or group name to route via
+    #[arg(long)]
+    via: String,
+    /// Match kind: domain|suffix|keyword (default: suffix)
+    #[arg(long, default_value = "suffix")]
+    kind: String,
+}
+
+#[derive(Args)]
+struct CustomRemoveArgs {
+    /// Domain to remove
+    #[arg(long)]
+    domain: String,
+    /// Optional proxy/group name to narrow removal
+    #[arg(long)]
+    via: Option<String>,
+}
+
+async fn run_manage(cmd: Manage) -> anyhow::Result<()> {
+    let paths = AppPaths::new()?;
+    paths.ensure_runtime_dirs().await?;
+    match cmd {
+        Manage::Cache(c) => manage_cache(&paths, c).await,
+        Manage::Custom(c) => manage_custom(&paths, c).await,
+    }
+}
+
+async fn manage_cache(paths: &AppPaths, cmd: CacheCmd) -> anyhow::Result<()> {
+    let mut cfg = storage::load_app_config(paths).await?;
+    match cmd {
+        CacheCmd::Show => {
+            if let Some(url) = cfg.last_subscription_url.as_ref() {
+                println!("last-subscription-url: {}", url);
+            } else {
+                println!("last-subscription-url: <none>");
+            }
+        }
+        CacheCmd::Clear => {
+            cfg.last_subscription_url = None;
+            storage::save_app_config(paths, &cfg).await?;
+            println!("cleared last-subscription-url");
+        }
+    }
+    Ok(())
+}
+
+async fn manage_custom(paths: &AppPaths, cmd: CustomCmd) -> anyhow::Result<()> {
+    let mut cfg = storage::load_app_config(paths).await?;
+    match cmd {
+        CustomCmd::Add(args) => {
+            let kind = match args.kind.to_ascii_lowercase().as_str() {
+                "domain" => RuleKind::Domain,
+                "keyword" => RuleKind::DomainKeyword,
+                _ => RuleKind::DomainSuffix,
+            };
+            let rule = CustomRule {
+                domain: args.domain,
+                kind,
+                via: args.via,
+            };
+            if !cfg.custom_rules.contains(&rule) {
+                cfg.custom_rules.push(rule);
+                storage::save_app_config(paths, &cfg).await?;
+                println!("custom rule added");
+            } else {
+                println!("custom rule already exists");
+            }
+        }
+        CustomCmd::List => {
+            if cfg.custom_rules.is_empty() {
+                println!("<no custom rules>");
+            } else {
+                for r in &cfg.custom_rules {
+                    let kind = match r.kind {
+                        RuleKind::Domain => "DOMAIN",
+                        RuleKind::DomainSuffix => "DOMAIN-SUFFIX",
+                        RuleKind::DomainKeyword => "DOMAIN-KEYWORD",
+                    };
+                    println!("{},{},{}", kind, r.domain, r.via);
+                }
+            }
+        }
+        CustomCmd::Remove(args) => {
+            let before = cfg.custom_rules.len();
+            cfg.custom_rules.retain(|r| {
+                if r.domain != args.domain {
+                    return true;
+                }
+                if let Some(v) = args.via.as_ref() {
+                    // keep if via doesn't match
+                    return &r.via != v;
+                }
+                // drop all with this domain
+                false
+            });
+            let after = cfg.custom_rules.len();
+            storage::save_app_config(paths, &cfg).await?;
+            println!("removed {} rule(s)", before.saturating_sub(after));
+        }
+    }
     Ok(())
 }
