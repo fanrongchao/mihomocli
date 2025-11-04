@@ -109,7 +109,10 @@ fn merge_proxy_group(base: &mut Value, incoming: &Value) {
         None => return,
     };
 
-    if let Some(incoming_list) = incoming_map.get(&proxies_key).and_then(|value| value.as_sequence()) {
+    if let Some(incoming_list) = incoming_map
+        .get(&proxies_key)
+        .and_then(|value| value.as_sequence())
+    {
         let mut existing: HashSet<String> = base_list
             .iter()
             .filter_map(|value| value.as_str().map(|s| s.to_string()))
@@ -125,7 +128,9 @@ fn merge_proxy_group(base: &mut Value, incoming: &Value) {
 
 fn populate_default_selector(groups: &mut [Value], proxy_names: &[String]) {
     for group in groups.iter_mut() {
-        let Some(name) = proxy_group_name(group) else { continue };
+        let Some(name) = proxy_group_name(group) else {
+            continue;
+        };
 
         if name == DEFAULT_SELECTOR_NAME {
             if let Some(mapping) = group.as_mapping_mut() {
@@ -243,25 +248,25 @@ mod tests {
     #[test]
     fn test_merge_proxy_groups_by_name() {
         let mut template = ClashConfig::default();
-        template.proxy_groups.push(selector_group(DEFAULT_SELECTOR_NAME, &[]));
+        template
+            .proxy_groups
+            .push(selector_group(DEFAULT_SELECTOR_NAME, &[]));
 
         let mut sub = ClashConfig::default();
-        sub.proxy_groups.push(selector_group(DEFAULT_SELECTOR_NAME, &["B"]));
+        sub.proxy_groups
+            .push(selector_group(DEFAULT_SELECTOR_NAME, &["B"]));
         sub.proxies.push(proxy("B"));
 
         let merged = merge_configs(template, vec![sub]);
-        assert!(merged
-            .proxy_groups
-            .iter()
-            .any(|group| match group {
-                Value::Mapping(map) => {
-                    map.get(&Value::from("proxies"))
-                        .and_then(|value| value.as_sequence())
-                        .map(|seq| seq.iter().any(|value| value.as_str() == Some("B")))
-                        .unwrap_or(false)
-                }
-                _ => false,
-            }));
+        assert!(merged.proxy_groups.iter().any(|group| match group {
+            Value::Mapping(map) => {
+                map.get(&Value::from("proxies"))
+                    .and_then(|value| value.as_sequence())
+                    .map(|seq| seq.iter().any(|value| value.as_str() == Some("B")))
+                    .unwrap_or(false)
+            }
+            _ => false,
+        }));
     }
 
     #[test]
@@ -281,7 +286,7 @@ mod tests {
         let mut base = ClashConfig::default();
         base.port = Some(8000);
         base.rules = vec!["BASE_RULE".to_string()];
-        base.proxy_groups = vec![selector_group("BaseGroup", &[])] ;
+        base.proxy_groups = vec![selector_group("BaseGroup", &[])];
         base.extra.insert("profile".into(), Value::from("store"));
 
         let mut merged = ClashConfig::default();
@@ -299,6 +304,9 @@ mod tests {
             .unwrap();
         assert_eq!(proxies.len(), 1);
         assert_eq!(proxies[0].as_str(), Some("X"));
-        assert_eq!(result.extra.get("profile").and_then(Value::as_str), Some("store"));
+        assert_eq!(
+            result.extra.get("profile").and_then(Value::as_str),
+            Some("store")
+        );
     }
 }

@@ -18,7 +18,10 @@ impl AppPaths {
         let base = BaseDirs::new().ok_or_else(|| anyhow!("failed to resolve base directories"))?;
         let config_dir = base.home_dir().join(".config/mihomo-tui");
         let cache_dir = base.home_dir().join(".cache/mihomo-tui/subscriptions");
-        Ok(Self { config_dir, cache_dir })
+        Ok(Self {
+            config_dir,
+            cache_dir,
+        })
     }
 
     pub fn config_dir(&self) -> &Path {
@@ -101,7 +104,10 @@ pub async fn load_subscription_list(paths: &AppPaths) -> anyhow::Result<Subscrip
     }
 }
 
-pub async fn save_subscription_list(paths: &AppPaths, list: &SubscriptionList) -> anyhow::Result<()> {
+pub async fn save_subscription_list(
+    paths: &AppPaths,
+    list: &SubscriptionList,
+) -> anyhow::Result<()> {
     let yaml = serde_yaml::to_string(list)?;
     if let Some(parent) = paths.subscriptions_file().parent() {
         fs::create_dir_all(parent).await?;

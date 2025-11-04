@@ -11,7 +11,14 @@ use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "mihomo-cli", author, version, about = "Mihomo subscription merge CLI", long_about = None)]
+#[command(
+    name = "mihomo-cli",
+    author,
+    version,
+    about = "Mihomo subscription merge CLI",
+    long_about = "Generate Mihomo/Clash configuration files by combining a template with one or more subscriptions.\n\nUse `mihomo-cli merge --help` for command-specific options and defaults for runtime directories under ~/.config/mihomo-tui.",
+    arg_required_else_help = true
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -19,6 +26,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    #[command(
+        about = "Merge subscriptions with a template",
+        long_about = "Load subscriptions (from the default list or ad-hoc sources), merge them with a template, and emit a Mihomo-compatible config."
+    )]
     Merge(MergeArgs),
 }
 
@@ -147,10 +158,9 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
         let deployer = FileDeployer {
             path: output_path.clone(),
         };
-        deployer
-            .deploy(&yaml)
-            .await
-            .with_context(|| format!("failed to write merged config to {}", output_path.display()))?;
+        deployer.deploy(&yaml).await.with_context(|| {
+            format!("failed to write merged config to {}", output_path.display())
+        })?;
         println!("merged config written to {}", output_path.display());
     }
 

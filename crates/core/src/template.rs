@@ -25,7 +25,10 @@ impl Template {
             .cloned()
             .ok_or_else(|| anyhow!("template YAML must be a mapping"))?;
         let config: ClashConfig = serde_yaml::from_value(value)?;
-        Ok(Self { raw: mapping, config })
+        Ok(Self {
+            raw: mapping,
+            config,
+        })
     }
 
     pub fn into_config(self) -> ClashConfig {

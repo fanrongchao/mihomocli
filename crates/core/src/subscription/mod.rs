@@ -1,4 +1,7 @@
-use std::{path::{Path, PathBuf}, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use anyhow::{anyhow, Context};
 use chrono::{DateTime, Utc};
@@ -110,11 +113,14 @@ impl Subscription {
                 Ok(Some(config))
             }
             (None, Some(path)) => {
-                let span = tracing::info_span!("read_subscription", id = %self.id, path = %path.display());
+                let span =
+                    tracing::info_span!("read_subscription", id = %self.id, path = %path.display());
                 let yaml = fs::read_to_string(path)
                     .instrument(span)
                     .await
-                    .with_context(|| format!("failed to read subscription file {}", path.display()))?;
+                    .with_context(|| {
+                        format!("failed to read subscription file {}", path.display())
+                    })?;
                 self.last_updated = Some(Utc::now());
                 let config = parse_subscription_payload(&yaml)?;
                 Ok(Some(config))
@@ -159,7 +165,8 @@ async fn fetch_remote(
         request = request.header(IF_NONE_MATCH, header_etag);
     }
 
-    if let Some(header_last_modified) = last_modified.or_else(|| cached_meta.last_modified.clone()) {
+    if let Some(header_last_modified) = last_modified.or_else(|| cached_meta.last_modified.clone())
+    {
         request = request.header(IF_MODIFIED_SINCE, header_last_modified);
     }
 
@@ -184,9 +191,14 @@ async fn fetch_remote(
             let yaml = response.text().await?;
             write_cache_files(&cache_file, &meta_file, &yaml, &headers).await?;
             let etag = header_to_string(headers.get(ETAG)).or(cached_meta.etag);
-            let last_modified = header_to_string(headers.get(LAST_MODIFIED)).or(cached_meta.last_modified);
+            let last_modified =
+                header_to_string(headers.get(LAST_MODIFIED)).or(cached_meta.last_modified);
 
-            Ok(FetchResult { yaml, etag, last_modified })
+            Ok(FetchResult {
+                yaml,
+                etag,
+                last_modified,
+            })
         }
         StatusCode::NOT_MODIFIED => {
             let yaml = read_cached_yaml(&cache_file)
@@ -205,7 +217,8 @@ async fn fetch_remote(
             Ok(FetchResult {
                 yaml,
                 etag: header_to_string(headers.get(ETAG)).or(cached_meta.etag),
-                last_modified: header_to_string(headers.get(LAST_MODIFIED)).or(cached_meta.last_modified),
+                last_modified: header_to_string(headers.get(LAST_MODIFIED))
+                    .or(cached_meta.last_modified),
             })
         }
         status => {
@@ -255,5 +268,7 @@ async fn write_cache_files(
 }
 
 fn header_to_string(value: Option<&reqwest::header::HeaderValue>) -> Option<String> {
-    value.and_then(|val| val.to_str().ok()).map(|s| s.to_string())
+    value
+        .and_then(|val| val.to_str().ok())
+        .map(|s| s.to_string())
 }

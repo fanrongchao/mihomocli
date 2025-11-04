@@ -12,6 +12,13 @@ The binary will be at `target/debug/mihomo-cli`.
 
 ## Command Overview
 
+Get top-level help and per-command details directly from the binary:
+
+```bash
+mihomo-cli --help
+mihomo-cli merge --help
+```
+
 ### `merge`
 
 Combine a template with configured subscriptions and optional ad-hoc sources.
