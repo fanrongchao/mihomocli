@@ -44,7 +44,7 @@ Adopt Conventional Commits (`feat:`, `fix:`, `refactor:`, `chore:`) to describe 
 Ensure code auto-creates paths such as `~/.config/mihomo-tui/templates/` and `~/.config/mihomo-tui/output/config.yaml`. Never commit user-specific credentials or cached subscription files. Document any new environment variables or feature flags in `SPEC.md` or an adjacent README update.
 
 ## Cache & Quick Rules (CLI)
-- Cached last subscription URL: `mihomo-cli manage cache show|clear`. Merge without `-s` uses the cached URL by default when no other sources are provided.
+- Cached last subscription URL: `mihomo-cli manage cache show|clear`. Reuse it explicitly via `--use-last` when calling `merge` without `-s`.
 - Quick custom rules (prepend to rules):
   - Add: `mihomo-cli manage custom add --domain <dom> --via <proxy_or_group> [--kind domain|suffix|keyword]`
   - List: `mihomo-cli manage custom list`

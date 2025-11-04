@@ -410,6 +410,10 @@ custom_rules_cli: |
   mihomo-cli manage custom list
   mihomo-cli manage custom remove --domain <dom> [--via <proxy_or_group>]
 
+use_last_flag: |
+  # 显式复用最近一次订阅（不默认自动复用，避免误用）
+  mihomo-cli merge --template <tpl> --use-last
+
 dev_flow: |
   # 使用 flake 开发环境，并在提交前保持干净：
   nix develop

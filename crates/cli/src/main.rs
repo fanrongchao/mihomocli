@@ -109,6 +109,11 @@ struct MergeArgs {
     #[arg(long)]
     stdout: bool,
 
+    /// Reuse the cached last subscription URL when no -s/--subscription is provided.
+    /// If both are set, explicit subscriptions take precedence.
+    #[arg(long = "use-last", default_value_t = false)]
+    use_last: bool,
+
     /// HTTP User-Agent used to fetch subscriptions (some providers vary output by UA).
     /// Defaults to clash-verge UA to obtain Clash YAML with rules when available.
     #[arg(long = "subscription-ua")]
@@ -219,27 +224,35 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
         }
     }
 
-    // If still no configs and no sources, try last cached subscription URL
+    // If requested and no explicit sources, reuse cached last subscription URL
     if configs.is_empty() && args.subscriptions.is_empty() && subscription_list.items.is_empty() {
-        if let Some(last_url) = app_cfg.last_subscription_url.clone() {
-            tracing::info!(last_url = %last_url, "no subscriptions provided; using cached last subscription URL");
-            let mut subscription = subscription_from_input(0, &last_url);
-            match subscription.load_config(&client, &paths).await {
-                Ok(Some(config)) => {
-                    configs.push(config);
-                    used_url = Some(last_url);
+        if args.use_last {
+            if let Some(last_url) = app_cfg.last_subscription_url.clone() {
+                tracing::info!(last_url = %last_url, "using cached last subscription URL");
+                let mut subscription = subscription_from_input(0, &last_url);
+                match subscription.load_config(&client, &paths).await {
+                    Ok(Some(config)) => {
+                        configs.push(config);
+                        used_url = Some(last_url);
+                    }
+                    Ok(None) => {}
+                    Err(err) => {
+                        return Err(anyhow!(
+                            "failed to load cached subscription {}: {}",
+                            last_url,
+                            err
+                        ));
+                    }
                 }
-                Ok(None) => {}
-                Err(err) => {
-                    return Err(anyhow!(
-                        "failed to load cached subscription {}: {}",
-                        last_url,
-                        err
-                    ));
-                }
+            } else {
+                return Err(anyhow!(
+                    "--use-last set but no cached last subscription URL found. Merge once with -s/--subscription first."
+                ));
             }
         } else {
-            return Err(anyhow!("no subscriptions provided and no cached last subscription URL found. Provide -s/--subscription or set one previously."));
+            return Err(anyhow!(
+                "no subscription provided. Pass -s/--subscription or use --use-last to reuse the cached last URL."
+            ));
         }
     }
 

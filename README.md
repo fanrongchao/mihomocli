@@ -89,7 +89,7 @@ mihomo -d ~/.config/mihomo-tui/resources -f ~/.config/mihomo-tui/output/config.y
 - Cache last subscription URL:
   - Show: `mihomo-cli manage cache show`
   - Clear: `mihomo-cli manage cache clear`
-  - Merge without `-s`: If no sources provided and no configured subscriptions, the CLI uses the cached URL.
+  - Reuse cached URL explicitly: pass `--use-last` to `merge` when no `-s/--subscription` is given.
 
 - Quick custom rules (prepend to rules so they take precedence):
   - Add: `mihomo-cli manage custom add --domain cache.nixos.org --via Proxy --kind suffix`
@@ -116,4 +116,5 @@ Huge thanks to the [clash-verge-rev](https://github.com/clash-verge-rev/clash-ve
 - E2E (local example):
   - `mihomo-cli merge --template examples/default.yaml --subscription examples/subscription.yaml --stdout`
 - E2E (provider URL):
-  - Use your real URL locally (do not commit), or align output with CVR by adding `--base-config /path/to/clash-verge.yaml` or using `examples/cvr_template.yaml`.
+  - Use your real URL locally (do not commit). To reuse the cached last URL explicitly, add `--use-last` to `merge` without `-s`.
+  - Align output with CVR by adding `--base-config /path/to/clash-verge.yaml` or using `examples/cvr_template.yaml`.

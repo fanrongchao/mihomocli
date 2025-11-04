@@ -36,6 +36,7 @@ Key flags:
 - `--stdout`: Print merged YAML to stdout instead of writing to disk.
 - `--subscription-ua <STRING>`: HTTP User-Agent used when fetching subscriptions. Default: `clash-verge/v2.4.2`.
 - `--subscription-allow-base64`: Enable decoding base64/share-link lists (trojan/vmess/ss). Disabled by default to prefer provider-native Clash YAML.
+- `--use-last`: Reuse the cached last subscription URL when no `-s/--subscription` is provided.
 
 ## Configuration Files
 
@@ -115,3 +116,12 @@ mihomo-cli merge \
 ```
 
 Customize `secret` or controller settings by copying the template to `~/.config/mihomo-tui/templates/` and editing as needed.
+### Cached last URL
+
+Reuse the last successful subscription URL without retyping it:
+
+```bash
+mihomo-cli merge \
+  --template examples/cvr_template.yaml \
+  --use-last
+```
