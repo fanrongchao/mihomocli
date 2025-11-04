@@ -42,6 +42,7 @@
           default = mihomo-cli;
           mihomo-cli = mihomo-cli;
         };
+        defaultPackage = mihomo-cli;
         devShells.default = pkgs.mkShell {
           nativeBuildInputs = [
             rustToolchain
@@ -59,7 +60,15 @@
           '';
         };
 
-        apps.default = flake-utils.lib.mkApp {
+        apps = {
+          default = flake-utils.lib.mkApp {
+            drv = mihomo-cli;
+          };
+          mihomo-cli = flake-utils.lib.mkApp {
+            drv = mihomo-cli;
+          };
+        };
+        defaultApp = flake-utils.lib.mkApp {
           drv = mihomo-cli;
         };
       }
