@@ -4,7 +4,7 @@
 ############################################################
 # 1. 项目信息
 ############################################################
-project_name: "mihomo-tui"
+project_name: "mihomo-cli / mihomo-tui"
 language: "Rust"
 rust_edition: "2021"
 description: >
@@ -28,7 +28,8 @@ test: "cargo test" with unit tests on merge logic
 ############################################################
 # 3. 工作区结构（Rust workspace）
 ############################################################
-# 要求生成器建立 workspace，拆成 core + tui 两个 crate，bin 在 tui 里。
+# 要求生成器建立 workspace，拆成 core + 前端 两个 crate。
+# 本仓库前端实现为 CLI（`crates/cli`），TUI 可作为后续扩展。
 workspace_layout:
   root:
     - Cargo.toml (workspace)
@@ -44,17 +45,9 @@ workspace_layout:
       - merge.rs          # 合并逻辑（模板 + 多订阅）
       - output.rs         # 写出 / 部署接口
       - storage.rs        # 保存订阅列表到本地
-  crates/tui:
+  crates/cli:
     src:
-      - main.rs
-      - app.rs
-      - ui.rs
-      - events.rs
-      - screens/
-        - home.rs
-        - subscriptions.rs
-        - subscription_detail.rs
-        - merge_preview.rs
+      - main.rs   # clap + orchestration
 
 ############################################################
 # 4. 配置路径约定（重要）
@@ -197,7 +190,19 @@ merge_rules_detailed: |
      - 标量字段 (port/socks-port/redir-port/mode/log-level/external-controller/secret)：
        以模板为准，订阅不要覆盖
      - proxies:
-       out.proxies.extend(sub.proxies)
+  out.proxies.extend(sub.proxies)
+
+############################################################
+# 7. 订阅抓取与解析（UA 与 base64 开关）
+############################################################
+- CLI 默认使用 `clash-verge/v2.4.2` 作为 User-Agent 抓取订阅，许多服务端会因此返回带 rules 的 Clash YAML（包含大量 DOMAIN-SUFFIX）。
+- 解析策略：
+  - 优先尝试将响应作为 Clash YAML 解析；
+  - `--subscription-allow-base64` 未开启时，不再尝试 base64 解码订阅；
+  - 显式开启 `--subscription-allow-base64` 时，允许解析 base64/分享链接清单（trojan/vmess/ss）。
+- 可通过 `--subscription-ua` 覆盖默认 UA。
+- 示例提供商（用于本地端到端验证）：
+  `https://example.com/sub.yaml`
      - rules:
        out.rules.extend(sub.rules)
      - proxy-groups:

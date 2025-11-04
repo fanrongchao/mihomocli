@@ -1,17 +1,21 @@
-use std::collections::BTreeMap;
+use indexmap::IndexMap;
 
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct ClashConfig {
-    #[serde(default)]
+    // Place extra first so flattened keys serialize before core arrays, matching CVR ordering better
+    #[serde(flatten)]
+    pub extra: IndexMap<String, Value>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
 
-    #[serde(rename = "socks-port", default)]
+    #[serde(rename = "socks-port", default, skip_serializing_if = "Option::is_none")]
     pub socks_port: Option<u16>,
 
-    #[serde(rename = "redir-port", default)]
+    #[serde(rename = "redir-port", default, skip_serializing_if = "Option::is_none")]
     pub redir_port: Option<u16>,
 
     #[serde(default)]
@@ -22,9 +26,6 @@ pub struct ClashConfig {
 
     #[serde(default)]
     pub rules: Vec<String>,
-
-    #[serde(flatten)]
-    pub extra: BTreeMap<String, Value>,
 }
 
 impl ClashConfig {

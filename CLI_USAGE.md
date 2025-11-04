@@ -34,6 +34,8 @@ Key flags:
 - `-s, --subscription <SRC>`: Extra source (URL or local YAML). Repeatable.
 - `--output <PATH>`: Destination for merged config. Defaults to `~/.config/mihomo-tui/output/config.yaml`.
 - `--stdout`: Print merged YAML to stdout instead of writing to disk.
+- `--subscription-ua <STRING>`: HTTP User-Agent used when fetching subscriptions. Default: `clash-verge/v2.4.2`.
+- `--subscription-allow-base64`: Enable decoding base64/share-link lists (trojan/vmess/ss). Disabled by default to prefer provider-native Clash YAML.
 
 ## Configuration Files
 
@@ -76,3 +78,40 @@ mihomo-cli merge \
 ```
 
 After a successful merge, the CLI updates the subscriptions metadata (ETag, last-modified, last-updated) in the chosen subscriptions file.
+
+### UA-sensitive provider example
+
+Some providers return full Clash YAML (including large DOMAIN-SUFFIX rule sets) only for specific User-Agents. The CLI defaults to a clash-verge UA to coax compatible outputs.
+
+```bash
+mihomo-cli merge \
+  --template examples/default.yaml \
+  --subscription "https://example.com/sub.yaml"
+
+# Override UA if needed
+mihomo-cli merge \
+  --template examples/default.yaml \
+  --subscription "https://example.com/sub.yaml" \
+  --subscription-ua "clash-verge/v2.4.2"
+```
+
+If your provider only serves share-link/base64 lists, opt in explicitly:
+
+```bash
+mihomo-cli merge \
+  --template examples/default.yaml \
+  --subscription "https://example.com/base64" \
+  --subscription-allow-base64
+```
+
+### CVR‑aligned template (no base-config required)
+
+Use the provided template that mirrors Clash Verge Rev runtime to align outputs without `--base-config`:
+
+```bash
+mihomo-cli merge \
+  --template examples/cvr_template.yaml \
+  --subscription "https://example.com/sub.yaml"
+```
+
+Customize `secret` or controller settings by copying the template to `~/.config/mihomo-tui/templates/` and editing as needed.

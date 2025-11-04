@@ -12,10 +12,11 @@ use tokio::fs;
 use tracing::Instrument;
 
 mod parser;
+pub use parser::ParseOptions;
 
 use crate::model::ClashConfig;
 use crate::storage::AppPaths;
-use parser::parse_subscription_payload;
+use parser::parse_subscription_payload_with_options;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Subscription {
@@ -109,7 +110,10 @@ impl Subscription {
                 }
                 self.last_updated = Some(Utc::now());
 
-                let config = parse_subscription_payload(&fetch_result.yaml)?;
+                let config = parse_subscription_payload_with_options(
+                    &fetch_result.yaml,
+                    current_parse_options(),
+                )?;
                 Ok(Some(config))
             }
             (None, Some(path)) => {
@@ -122,12 +126,25 @@ impl Subscription {
                         format!("failed to read subscription file {}", path.display())
                     })?;
                 self.last_updated = Some(Utc::now());
-                let config = parse_subscription_payload(&yaml)?;
+                let config =
+                    parse_subscription_payload_with_options(&yaml, current_parse_options())?;
                 Ok(Some(config))
             }
             _ => Err(anyhow!("subscription {} missing url or path", self.id)),
         }
     }
+}
+
+static PARSE_OPTIONS: std::sync::OnceLock<ParseOptions> = std::sync::OnceLock::new();
+
+/// Configure how subscription payloads are parsed (e.g., allow/disallow base64 list decoding).
+/// Call once during program initialization.
+pub fn set_parse_options(opts: ParseOptions) {
+    let _ = PARSE_OPTIONS.set(opts);
+}
+
+fn current_parse_options() -> ParseOptions {
+    *PARSE_OPTIONS.get().unwrap_or(&ParseOptions { allow_base64: true })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

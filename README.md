@@ -1,10 +1,10 @@
 # mihomo-cli
 
-`mihomo-cli` is a Rust-based command-line tool for merging Mihomo/Clash subscriptions using the same conventions as [clash-verge-rev](https://github.com/clash-verge-rev/clash-verge-rev). It parses base64/URI share links (trojan/vmess/shadowsocks), merges multiple subscriptions with a template, and can inherit ports, DNS, rules, and proxy-groups from an existing Clash config.
+`mihomo-cli` is a Rust-based command-line tool for merging Mihomo/Clash subscriptions using the same conventions as [clash-verge-rev](https://github.com/clash-verge-rev/clash-verge-rev). It merges multiple subscriptions with a template and can inherit ports, DNS, rules, and proxy-groups from an existing Clash config. By default it mimics Clash Verge’s HTTP User-Agent so providers return Clash YAML (with rules) when available. You can optionally enable decoding of base64/share-link lists (trojan/vmess/shadowsocks).
 
 ## Features
 - Rust workspace with reusable core crate and CLI front-end
-- Clash YAML parsing plus share-link decoding
+- Clash YAML parsing; optional share-link decoding (disabled by default)
 - Template + subscription merge identical to clash-verge-rev semantics
 - Optional base-config inheritance (`--base-config`) to reuse existing rules/groups
 - Auto-downloads `Country.mmdb`, `geoip.dat`, `geosite.dat` into `~/.config/mihomo-tui/resources/`
@@ -14,16 +14,61 @@
 # Build
 cargo build -p mihomo-cli
 
-# Merge with template and subscription share link (output defaults to
-# ~/.config/mihomo-tui/output/config.yaml)
-mihomo-cli merge \ 
-  --template examples/template.yaml \ 
+# Merge with template and remote subscription (output defaults to
+# ~/.config/mihomo-tui/output/config.yaml). The default User-Agent is
+# 'clash-verge/v2.4.2', which often yields Clash YAML with rules.
+mihomo-cli merge \
+  --template examples/template.yaml \
   --subscription "https://example.com/subscription"
+
+# If your provider only returns base64/share-link lists, explicitly allow it:
+mihomo-cli merge \
+  --template examples/template.yaml \
+  --subscription "https://example.com/base64" \
+  --subscription-allow-base64
 
 # Want clash-verge-rev parity? Drop your clash-verge.yaml at
 # ~/.config/mihomo-tui/base-config.yaml (or pass --base-config) so ports/dns/
 # rules/groups are inherited automatically.
 ```
+
+## End-to-End Test (UA feature)
+
+Some providers return a richer Clash YAML (including many DOMAIN-SUFFIX rules) only when the HTTP User-Agent matches known clients. The CLI defaults to `clash-verge/v2.4.2`, which usually triggers full outputs.
+
+Example with a real provider URL (adjust to your environment/network):
+
+```bash
+mihomo-cli merge \
+  --template examples/default.yaml \
+  --subscription "https://example.com/sub.yaml"
+
+# If you need to override UA for debugging:
+mihomo-cli merge \
+  --template examples/default.yaml \
+  --subscription "https://example.com/sub.yaml" \
+  --subscription-ua "clash-verge/v2.4.2"
+```
+
+Expected results:
+- Resources `Country.mmdb`, `geoip.dat`, `geosite.dat` are auto-downloaded into `~/.config/mihomo-tui/resources/` if missing.
+- Output written to `~/.config/mihomo-tui/output/config.yaml` unless `--stdout` is used.
+- Merged YAML contains many DOMAIN-SUFFIX rules from the provider.
+
+## CVR‑Aligned Template (no base-config)
+
+To get output structurally matching Clash Verge Rev without supplying `--base-config`, use the provided CVR‑aligned template:
+
+```bash
+mihomo-cli merge \
+  --template examples/cvr_template.yaml \
+  --subscription "https://example.com/sub.yaml"
+```
+
+Notes:
+- The template mirrors CVR runtime settings (mixed-port, tun, dns, profile, etc.).
+- It leaves `proxy-groups` and `rules` empty so the provider subscription defines them fully.
+- `secret` is empty by default; set it in your own copy if needed.
 
 Run Mihomo with the generated configuration and resources:
 
@@ -31,9 +76,14 @@ Run Mihomo with the generated configuration and resources:
 mihomo -d ~/.config/mihomo-tui/resources -f ~/.config/mihomo-tui/output/config.yaml
 ```
 
+## CLI Flags of Interest
+
+- `--subscription-ua <STRING>`: HTTP User-Agent used to fetch subscriptions. Default: `clash-verge/v2.4.2`.
+- `--subscription-allow-base64`: Enable decoding base64/share-link subscriptions (trojan/vmess/ss). Disabled by default to prefer native Clash YAML from providers.
+
 ## Repository Layout
 - `crates/core`: Clash models, merge logic, subscription parsing, storage helpers
-- `crates/cli`: Command-line interface, argument handling, file deployment
+- `crates/cli`: Command-line interface, argument handling, file deployment (current front-end)
 - `examples/`: Example template/subscription files for local testing
 - `resources/`: Base-config reference and documentation
 - `SPEC.md`: Project specification and requirements

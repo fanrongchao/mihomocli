@@ -28,10 +28,56 @@ struct Cli {
 enum Commands {
     #[command(
         about = "Merge subscriptions with a template",
-        long_about = "Load subscriptions (from the default list or ad-hoc sources), merge them with a template, and emit a Mihomo-compatible config."
+        long_about = "Load subscriptions (from the default list or ad-hoc sources), merge them with a template, and emit a Mihomo-compatible config.",
+        after_long_help = r#"
+Examples:
+
+  Minimal (template resolves under ~/.config/mihomo-tui/templates):
+
+    mihomo-cli merge --template default.yaml
+
+
+  Full example (all options combined):
+
+    mihomo-cli merge \
+      --template default.yaml \
+      --base-config base-config.yaml \
+      --subscriptions-file ~/.config/mihomo-tui/subscriptions.yaml \
+      -s https://example.com/sub.yaml \
+      -s ./extras/local.yaml \
+      --output ~/.config/mihomo-tui/output/config.yaml
+
+
+  Print to stdout instead of writing a file:
+
+    mihomo-cli merge --template default.yaml --stdout -s https://example.com/sub.yaml
+
+
+Notes:
+
+  - Relative paths for --template are resolved under ~/.config/mihomo-tui/templates/.
+
+  - Relative paths for --base-config are resolved under ~/.config/mihomo-tui/.
+
+  - If --subscriptions-file is omitted, the default list at ~/.config/mihomo-tui/subscriptions.yaml is used.
+
+  - Multiple -s/--subscription entries may be provided (URL or file path).
+
+  - Use --stdout or --output, not both.
+
+  - Use --subscription-ua to override the HTTP User-Agent for fetching subscriptions.
+
+    Defaults to 'clash-verge/v2.4.2' to coax providers into returning Clash YAML with rules.
+
+  - Use --subscription-allow-base64 to enable decoding base64/share-link subscriptions (trojan/vmess/ss).
+
+    Disabled by default; when disabled, only native Clash YAML is accepted from providers.
+"#
     )]
     Merge(MergeArgs),
 }
+
+// Note: default clap styles are used to avoid introducing extra dependencies
 
 #[derive(Args)]
 struct MergeArgs {
@@ -58,6 +104,16 @@ struct MergeArgs {
     /// Write merged config to stdout instead of a file.
     #[arg(long)]
     stdout: bool,
+
+    /// HTTP User-Agent used to fetch subscriptions (some providers vary output by UA).
+    /// Defaults to clash-verge UA to obtain Clash YAML with rules when available.
+    #[arg(long = "subscription-ua")]
+    subscription_ua: Option<String>,
+
+    /// Allow decoding base64/subscription share-link lists when fetching subscriptions.
+    /// Disabled by default to prefer native Clash YAML from providers.
+    #[arg(long = "subscription-allow-base64", default_value_t = false)]
+    subscription_allow_base64: bool,
 }
 
 #[tokio::main]
@@ -83,9 +139,20 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
     let paths = AppPaths::new()?;
     paths.ensure_runtime_dirs().await?;
 
+    // Mimic clash-verge UA so some providers return Clash YAML (with rules)
+    let ua = args
+        .subscription_ua
+        .clone()
+        .unwrap_or_else(|| "clash-verge/v2.4.2".to_string());
     let client = reqwest::Client::builder()
-        .user_agent("mihomo-cli/0.1")
+        .user_agent(&ua)
         .build()?;
+
+    // Configure core parser behavior (align with UA behavior):
+    // by default, do NOT attempt base64 decoding; allow only if explicitly requested.
+    mihomo_core::subscription::set_parse_options(mihomo_core::subscription::ParseOptions {
+        allow_base64: args.subscription_allow_base64,
+    });
 
     ensure_mihomo_resources(&client, &paths).await?;
 

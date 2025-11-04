@@ -12,28 +12,42 @@ use url::Url;
 
 use crate::model::ClashConfig;
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ParseOptions {
+    pub allow_base64: bool,
+}
+
 /// Attempt to interpret the raw subscription payload as a ClashConfig.
 ///
 /// - First try native YAML deserialization.
 /// - Then attempt to decode base64-wrapped data.
 /// - Finally, treat the decoded/plain text as a list of share links (trojan/vmess/ss).
 pub fn parse_subscription_payload(raw: &str) -> anyhow::Result<ClashConfig> {
+    parse_subscription_payload_with_options(raw, ParseOptions { allow_base64: true })
+}
+
+pub fn parse_subscription_payload_with_options(
+    raw: &str,
+    opts: ParseOptions,
+) -> anyhow::Result<ClashConfig> {
     // Fast path: valid YAML Clash configuration.
     if let Ok(config) = serde_yaml::from_str::<ClashConfig>(raw) {
         return Ok(config);
     }
 
-    let mut decoded_candidates = decode_candidates(raw);
+    if opts.allow_base64 {
+        let mut decoded_candidates = decode_candidates(raw);
 
-    for candidate in decoded_candidates.iter() {
-        if let Ok(config) = serde_yaml::from_str::<ClashConfig>(candidate) {
-            return Ok(config);
+        for candidate in decoded_candidates.iter() {
+            if let Ok(config) = serde_yaml::from_str::<ClashConfig>(candidate) {
+                return Ok(config);
+            }
         }
-    }
 
-    for candidate in decoded_candidates.drain(..) {
-        if let Some(config) = parse_share_links(&candidate)? {
-            return Ok(config);
+        for candidate in decoded_candidates.drain(..) {
+            if let Some(config) = parse_share_links(&candidate)? {
+                return Ok(config);
+            }
         }
     }
 

@@ -31,6 +31,7 @@ pub fn merge_configs(template: ClashConfig, subs: Vec<ClashConfig>) -> ClashConf
 }
 
 pub fn apply_base_config(mut merged: ClashConfig, base: &ClashConfig) -> ClashConfig {
+    // Ports: prefer base-config values. If base uses mixed-port (extra), drop legacy ports.
     if let Some(port) = base.port {
         merged.port = Some(port);
     }
@@ -40,10 +41,16 @@ pub fn apply_base_config(mut merged: ClashConfig, base: &ClashConfig) -> ClashCo
     if let Some(redir) = base.redir_port {
         merged.redir_port = Some(redir);
     }
+    if base.extra.contains_key("mixed-port") {
+        merged.port = None;
+        merged.socks_port = None;
+        merged.redir_port = None;
+    }
 
+    // Extra: keep base-config values when keys overlap; only add merged keys that base lacks.
     let mut extra = base.extra.clone();
     for (key, value) in merged.extra.into_iter() {
-        extra.insert(key, value);
+        extra.entry(key).or_insert(value);
     }
     merged.extra = extra;
 
