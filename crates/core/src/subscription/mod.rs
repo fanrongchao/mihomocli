@@ -144,7 +144,9 @@ pub fn set_parse_options(opts: ParseOptions) {
 }
 
 fn current_parse_options() -> ParseOptions {
-    *PARSE_OPTIONS.get().unwrap_or(&ParseOptions { allow_base64: true })
+    *PARSE_OPTIONS
+        .get()
+        .unwrap_or(&ParseOptions { allow_base64: true })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

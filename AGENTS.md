@@ -19,22 +19,33 @@ output.
   runtime config merging logic. For now, rely on `~/.config/mihomo-tui/base-config.yaml`.
 
 ## Build, Test, and Development Commands
-- `cargo build` compiles the entire workspace. Use `cargo build -p core` or `-p mihomo-cli` for crate-specific checks.
-- `cargo run -p mihomo-cli -- merge ...` runs the CLI. Example:
-
-  `cargo run -p mihomo-cli -- merge --template examples/default.yaml --subscription https://example.com/sub.yaml`
-
-- `cargo test -p core` executes unit tests, especially the merge logic and subscription parsing.
-- `cargo fmt` and `cargo clippy --all-targets --all-features` enforce formatting and linting before review.
+- Preferred: enter flake dev shell
+  - `nix develop`
+- Build:
+  - `cargo build` (or `cargo build -p mihomo-cli`)
+- Run CLI:
+  - `cargo run -p mihomo-cli -- merge --template examples/default.yaml --subscription https://example.com/sub.yaml`
+- Tests:
+  - `cargo test -p mihomo-core`
+- Formatting & linting (required before commit):
+  - `cargo fmt`
+  - `cargo clippy --all-targets --all-features`
 
 ## Coding Style & Naming Conventions
 Stick to Rust 2021 idioms with 4-space indentation and `snake_case` for modules, functions, and fields. Prefer descriptive struct names (`Subscription`, `FileDeployer`). Use `rustfmt` defaults; never hand-edit generated formatting. Keep public APIs documented with `///` comments when behaviour is non-trivial. Log actionable events through `tracing` with structured fields.
 
 ## Testing Guidelines
-Unit tests live beside implementation files in `crates/core/src`. Cover merge behaviour (ports, proxies, proxy groups) and subscriptions parsing edge cases (including base64/share-link lists). Name tests with `test_merge_ports`-style clarity. Run the full suite via `cargo test` before submitting.
+Unit tests live beside implementation files in `crates/core/src`. Cover merge behaviour (ports, proxies, proxy groups) and subscriptions parsing edge cases (including base64/share-link lists). Name tests with `test_merge_ports`-style clarity. Run the full suite via `cargo test` before submitting. Use real provider URLs locally only; do not commit real URLs in docs or examples.
 
 ## Commit & Pull Request Guidelines
 Adopt Conventional Commits (`feat:`, `fix:`, `refactor:`, `chore:`) to describe intent. Scope commits narrowly—configuration paths and merge logic should land separately. Pull requests must summarise changes, note affected config directories (`~/.config/mihomo-tui`, `~/.cache/mihomo-tui`), and call out manual verification (e.g., `cargo run -p tui`). Attach screenshots only when UI layout changes; otherwise paste terminal output. Link related issues and describe follow-ups if work is partial.
 
 ## Configuration Tips
 Ensure code auto-creates paths such as `~/.config/mihomo-tui/templates/` and `~/.config/mihomo-tui/output/config.yaml`. Never commit user-specific credentials or cached subscription files. Document any new environment variables or feature flags in `SPEC.md` or an adjacent README update.
+
+## Cache & Quick Rules (CLI)
+- Cached last subscription URL: `mihomo-cli manage cache show|clear`. Merge without `-s` uses the cached URL by default when no other sources are provided.
+- Quick custom rules (prepend to rules):
+  - Add: `mihomo-cli manage custom add --domain <dom> --via <proxy_or_group> [--kind domain|suffix|keyword]`
+  - List: `mihomo-cli manage custom list`
+  - Remove: `mihomo-cli manage custom remove --domain <dom> [--via <proxy_or_group>]`

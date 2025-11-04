@@ -8,11 +8,14 @@
 - Template + subscription merge identical to clash-verge-rev semantics
 - Optional base-config inheritance (`--base-config`) to reuse existing rules/groups
 - Auto-downloads `Country.mmdb`, `geoip.dat`, `geosite.dat` into `~/.config/mihomo-tui/resources/`
+- Caches last used subscription URL (for quick re-run without args)
+- Manage quick custom domain->proxy rules (`manage custom add/list/remove`)
 
 ## Quick Start
 ```bash
 # Build
-cargo build -p mihomo-cli
+# Recommended: enter flake dev environment, then build
+nix develop -c cargo build -p mihomo-cli
 
 # Merge with template and remote subscription (output defaults to
 # ~/.config/mihomo-tui/output/config.yaml). The default User-Agent is
@@ -81,6 +84,18 @@ mihomo -d ~/.config/mihomo-tui/resources -f ~/.config/mihomo-tui/output/config.y
 - `--subscription-ua <STRING>`: HTTP User-Agent used to fetch subscriptions. Default: `clash-verge/v2.4.2`.
 - `--subscription-allow-base64`: Enable decoding base64/share-link subscriptions (trojan/vmess/ss). Disabled by default to prefer native Clash YAML from providers.
 
+## Cache and Quick Rules
+
+- Cache last subscription URL:
+  - Show: `mihomo-cli manage cache show`
+  - Clear: `mihomo-cli manage cache clear`
+  - Merge without `-s`: If no sources provided and no configured subscriptions, the CLI uses the cached URL.
+
+- Quick custom rules (prepend to rules so they take precedence):
+  - Add: `mihomo-cli manage custom add --domain cache.nixos.org --via Proxy --kind suffix`
+  - List: `mihomo-cli manage custom list`
+  - Remove: `mihomo-cli manage custom remove --domain cache.nixos.org --via Proxy`
+
 ## Repository Layout
 - `crates/core`: Clash models, merge logic, subscription parsing, storage helpers
 - `crates/cli`: Command-line interface, argument handling, file deployment (current front-end)
@@ -91,3 +106,14 @@ mihomo -d ~/.config/mihomo-tui/resources -f ~/.config/mihomo-tui/output/config.y
 
 ## Acknowledgements
 Huge thanks to the [clash-verge-rev](https://github.com/clash-verge-rev/clash-verge-rev) project for the original merge semantics and resource workflow that inspired this CLI.
+
+## Dev Workflow (flake + fmt + tests)
+
+- Enter flake dev: `nix develop`
+- Format: `cargo fmt`
+- Lint: `cargo clippy --all-targets --all-features`
+- Tests: `cargo test -p mihomo-core`
+- E2E (local example):
+  - `mihomo-cli merge --template examples/default.yaml --subscription examples/subscription.yaml --stdout`
+- E2E (provider URL):
+  - Use your real URL locally (do not commit), or align output with CVR by adding `--base-config /path/to/clash-verge.yaml` or using `examples/cvr_template.yaml`.

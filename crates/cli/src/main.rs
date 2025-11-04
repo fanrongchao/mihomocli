@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Context};
 use clap::{Args, Parser, Subcommand};
 use mihomo_core::output::{ConfigDeployer, FileDeployer};
-use mihomo_core::storage::{self, AppConfig, AppPaths, CustomRule, RuleKind, SubscriptionList};
+use mihomo_core::storage::{self, AppPaths, CustomRule, RuleKind, SubscriptionList};
 use mihomo_core::subscription::{Subscription, SubscriptionKind};
 use mihomo_core::{merge_configs, Template};
 use tokio::fs;
@@ -150,9 +150,7 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
         .subscription_ua
         .clone()
         .unwrap_or_else(|| "clash-verge/v2.4.2".to_string());
-    let client = reqwest::Client::builder()
-        .user_agent(&ua)
-        .build()?;
+    let client = reqwest::Client::builder().user_agent(&ua).build()?;
 
     // Configure core parser behavior (align with UA behavior):
     // by default, do NOT attempt base64 decoding; allow only if explicitly requested.
@@ -233,7 +231,11 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
                 }
                 Ok(None) => {}
                 Err(err) => {
-                    return Err(anyhow!("failed to load cached subscription {}: {}", last_url, err));
+                    return Err(anyhow!(
+                        "failed to load cached subscription {}: {}",
+                        last_url,
+                        err
+                    ));
                 }
             }
         } else {

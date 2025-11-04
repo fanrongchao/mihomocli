@@ -12,10 +12,18 @@ pub struct ClashConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
 
-    #[serde(rename = "socks-port", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "socks-port",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub socks_port: Option<u16>,
 
-    #[serde(rename = "redir-port", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "redir-port",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub redir_port: Option<u16>,
 
     #[serde(default)]

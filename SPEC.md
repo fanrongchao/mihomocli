@@ -24,6 +24,7 @@ config_dir_helper: "directories"
 logging: "tracing" or "tracing-subscriber"
 error_handling: "anyhow" or "thiserror"
 test: "cargo test" with unit tests on merge logic
+dev_shell: "nix flake develop (nix develop)"
 
 ############################################################
 # 3. 工作区结构（Rust workspace）
@@ -391,3 +392,27 @@ codex_prompt_stub: |
   请按上面这份规格说明创建一个 Rust workspace，先生成 crates/core 的代码，再生成 crates/tui，
   保证能 cargo build，通过简单的 TUI 列表看到 mock 的订阅列表，
   并且实现模板 + 多订阅的合并函数。
+############################################################
+# 14. 应用配置与快捷规则（新增）
+############################################################
+app_config: |
+  # ~/.config/mihomo-tui/app.yaml
+  last_subscription_url: "https://example.com/sub.yaml"  # 最近一次成功的订阅 URL（在用户未提供 -s 时可复用）
+  custom_rules:                                            # 用户快捷规则，优先级高于订阅/base-config
+    - domain: cache.nixos.org
+      kind: domain-suffix   # 或 domain / domain-keyword
+      via: Proxy            # 代理或分组名称
+
+custom_rules_cli: |
+  # CLI 管理命令
+  mihomo-cli manage cache show|clear
+  mihomo-cli manage custom add --domain <dom> --via <proxy_or_group> [--kind domain|suffix|keyword]
+  mihomo-cli manage custom list
+  mihomo-cli manage custom remove --domain <dom> [--via <proxy_or_group>]
+
+dev_flow: |
+  # 使用 flake 开发环境，并在提交前保持干净：
+  nix develop
+  cargo fmt
+  cargo clippy --all-targets --all-features
+  cargo test -p mihomo-core
