@@ -197,12 +197,13 @@ merge_rules_detailed: |
 # 7. 订阅抓取与解析（UA 与 base64 开关）
 ############################################################
 - CLI 默认使用 `clash-verge/v2.4.2` 作为 User-Agent 抓取订阅，许多服务端会因此返回带 rules 的 Clash YAML（包含大量 DOMAIN-SUFFIX）。
+- CLI 启动时会确保 `~/.config/mihomocli/templates/cvr_template.yaml` 存在，并在缺失时写入嵌入的默认模板（同 examples/cvr_template.yaml）。
 - 解析策略：
   - 优先尝试将响应作为 Clash YAML 解析；
   - `--subscription-allow-base64` 未开启时，不再尝试 base64 解码订阅；
   - 显式开启 `--subscription-allow-base64` 时，允许解析 base64/分享链接清单（trojan/vmess/ss）。
 - 可通过 `--subscription-ua` 覆盖默认 UA。
-- `--dev-rules` 默认开启，会在最终输出前插入一批常用开发依赖域名（涵盖 GitHub/GitLab、Go module proxy、npm/yarn/pnpm、PyPI、crates.io、Kubernetes/k3s 镜像与下载源、Docker/GCR、cache.nixos.org，以及主流 AI 编程代理如 OpenAI/Codex、Anthropic Claude、Google Gemini、GooseAI、Cursor、OpenCode 等）的 proxy 规则。默认指向 `Proxy`，可用 `--dev-rules-via` 覆盖；需要查看默认列表时可使用 `--dev-rules-show`，若不需要可通过 `--no-dev-rules` 禁用。
+- `--dev-rules` 默认开启，会在最终输出前插入一批常用开发依赖域名（涵盖 GitHub/GitLab、Go module proxy、npm/yarn/pnpm、PyPI、crates.io、Kubernetes/k3s 镜像与下载源、Docker/GCR、cache.nixos.org，以及主流 AI 编程代理如 OpenAI/Codex、Anthropic Claude、Google Gemini、Cursor、OpenCode 等）的 proxy 规则。默认指向 `Proxy`，可用 `--dev-rules-via` 覆盖；需要查看默认列表时可使用 `--dev-rules-show`，若不需要可通过 `--no-dev-rules` 禁用。
 - 示例提供商（用于本地端到端验证）：
   `https://example.com/sub.yaml`
      - rules:

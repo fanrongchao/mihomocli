@@ -28,13 +28,13 @@ mihomo-cli merge --template <template_path> [OPTIONS]
 ```
 
 Key flags:
-- `--template <PATH>`: Template YAML file. Relative paths resolve under `~/.config/mihomocli/templates/`.
+- `--template <PATH>`: Optional template YAML file. Defaults to the bundled `cvr_template.yaml` under `~/.config/mihomocli/templates/`.
 - `--base-config <PATH>`: Optional Clash config whose ports/dns/rules/group metadata should be inherited (e.g., `clash-verge.yaml`). If omitted, the CLI auto-loads `~/.config/mihomocli/base-config.yaml` when present.
 - `--subscriptions-file <PATH>`: Custom subscriptions list (defaults to `~/.config/mihomocli/subscriptions.yaml`).
 - `-s, --subscription <SRC>`: Extra source (URL or local YAML). Repeatable.
 - `--output <PATH>`: Destination for merged config. Defaults to `~/.config/mihomocli/output/config.yaml`.
 - `--stdout`: Print merged YAML to stdout instead of writing to disk.
-- `--no-dev-rules`: Disable the default proxy-rule injection for common developer registries (GitHub/GitLab, Go module proxies, npm/yarn/pnpm, PyPI, crates.io, Kubernetes/k3s registries, Docker/GCR, cache.nixos.org, mainstream AI agent APIs like OpenAI/Anthropic/Gemini/Goose/Cursor/OpenCode, etc.).
+- `--no-dev-rules`: Disable the default proxy-rule injection for common developer registries (GitHub/GitLab, Go module proxies, npm/yarn/pnpm, PyPI, crates.io, Kubernetes/k3s registries, Docker/GCR, cache.nixos.org, mainstream AI agent APIs like OpenAI/Anthropic/Gemini/Cursor/OpenCode, etc.).
 - `--dev-rules-via <NAME>`: Proxy/group tag used by the generated dev rules (default: `Proxy`).
 - `--dev-rules-show`: Print the generated dev rule list (even without applying it).
 - `--subscription-ua <STRING>`: HTTP User-Agent used when fetching subscriptions. Default: `clash-verge/v2.4.2`.
@@ -44,7 +44,7 @@ Key flags:
 ## Configuration Files
 
 Runtime directories (auto-created):
-- Templates: `~/.config/mihomocli/templates/`
+- Templates: `~/.config/mihomocli/templates/` (auto-populated with `cvr_template.yaml` on first run)
 - Subscriptions list: `~/.config/mihomocli/subscriptions.yaml`
 - Cache: `~/.cache/mihomocli/subscriptions/`
 - Output: `~/.config/mihomocli/output/config.yaml`

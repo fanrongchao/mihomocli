@@ -32,6 +32,10 @@ impl AppPaths {
         self.config_dir.join("templates")
     }
 
+    pub fn default_template_path(&self) -> PathBuf {
+        self.templates_dir().join("cvr_template.yaml")
+    }
+
     pub fn resources_dir(&self) -> PathBuf {
         self.config_dir.join("resources")
     }

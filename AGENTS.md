@@ -41,7 +41,7 @@ Unit tests live beside implementation files in `crates/core/src`. Cover merge be
 Adopt Conventional Commits (`feat:`, `fix:`, `refactor:`, `chore:`) to describe intent. Scope commits narrowly—configuration paths and merge logic should land separately. Pull requests must summarise changes, note affected config directories (`~/.config/mihomocli`, `~/.cache/mihomocli`), and call out manual verification (e.g., `cargo run -p tui`). Attach screenshots only when UI layout changes; otherwise paste terminal output. Link related issues and describe follow-ups if work is partial.
 
 ## Configuration Tips
-Ensure code auto-creates paths such as `~/.config/mihomocli/templates/` and `~/.config/mihomocli/output/config.yaml`. Never commit user-specific credentials or cached subscription files. Document any new environment variables or feature flags in `SPEC.md` or an adjacent README update.
+Ensure code auto-creates paths such as `~/.config/mihomocli/templates/` and `~/.config/mihomocli/output/config.yaml`. The CLI ships with `cvr_template.yaml` embedded and writes it into the templates directory on first run—keep that behaviour intact when refactoring. Never commit user-specific credentials or cached subscription files. Document any new environment variables or feature flags in `SPEC.md` or an adjacent README update.
 
 When adding merge-time conveniences, prefer CLI flags. The existing dev-rule feature is enabled by default and prepends proxy rules for popular developer registries (Git/GitLab, Go proxy mirrors, npm/yarn, PyPI, crates.io, Kubernetes/k3s mirrors, Docker/GCR, cache.nixos.org, etc.); allow users to opt out via `--no-dev-rules`, adjust targets with `--dev-rules-via`, and print the defaults with `--dev-rules-show`.
 

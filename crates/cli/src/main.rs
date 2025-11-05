@@ -32,15 +32,15 @@ enum Commands {
         after_long_help = r#"
 Examples:
 
-  Minimal (template resolves under ~/.config/mihomocli/templates):
+  Minimal (uses the bundled CVR-aligned template):
 
-    mihomo-cli merge --template default.yaml
+    mihomo-cli merge
 
 
-  Full example (all options combined):
+  Full example (explicit template and options):
 
     mihomo-cli merge \
-      --template default.yaml \
+      --template custom.yaml \
       --base-config base-config.yaml \
       --subscriptions-file ~/.config/mihomocli/subscriptions.yaml \
       -s https://example.com/sub.yaml \
@@ -50,7 +50,7 @@ Examples:
 
   Print to stdout instead of writing a file:
 
-    mihomo-cli merge --template default.yaml --stdout -s https://example.com/sub.yaml
+    mihomo-cli merge --stdout -s https://example.com/sub.yaml
 
 
 Notes:
@@ -73,9 +73,9 @@ Notes:
 
     Disabled by default; when disabled, only native Clash YAML is accepted from providers.
 
-  - Use --dev-rules to prepend GitHub, Docker, GCR, and cache.nixos.org rules that force traffic through a proxy.
+  - Dev rules are enabled by default, prepending proxy-routing for developer/AI endpoints.
 
-    Change the target proxy/group with --dev-rules-via (defaults to 'Proxy').
+    Change the target proxy/group with --dev-rules-via (defaults to 'Proxy'). Disable with --no-dev-rules.
 
   - Use --dev-rules-show to print the generated list (without changing output unless --dev-rules is enabled).
 "#
@@ -91,9 +91,9 @@ Notes:
 
 #[derive(Args)]
 struct MergeArgs {
-    /// Template YAML file path. Relative paths resolve against the templates directory.
+    /// Template YAML file path. Defaults to the auto-installed CVR-aligned template.
     #[arg(long)]
-    template: PathBuf,
+    template: Option<PathBuf>,
 
     /// Optional base config to inherit fields/rules from (e.g., clash-verge.yaml).
     #[arg(long)]
@@ -183,7 +183,14 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
 
     ensure_mihomo_resources(&client, &paths).await?;
 
-    let template_path = resolve_template_path(&paths, &args.template);
+    ensure_default_template(&paths).await?;
+
+    let template_path = args
+        .template
+        .as_ref()
+        .map(|p| resolve_template_path(&paths, p))
+        .unwrap_or_else(|| paths.default_template_path());
+
     let template = Template::load(&template_path)
         .await
         .with_context(|| format!("failed to load template from {}", template_path.display()))?
@@ -506,6 +513,22 @@ async fn ensure_parent(path: &Path) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).await?;
     }
+    Ok(())
+}
+
+const DEFAULT_TEMPLATE_CONTENT: &str = include_str!("../../../examples/cvr_template.yaml");
+
+async fn ensure_default_template(paths: &AppPaths) -> anyhow::Result<()> {
+    let template_path = paths.default_template_path();
+
+    if !fs::try_exists(&template_path).await.unwrap_or(false) {
+        if let Some(parent) = template_path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        fs::write(&template_path, DEFAULT_TEMPLATE_CONTENT).await?;
+        tracing::info!(path = %template_path.display(), "installed default template");
+    }
+
     Ok(())
 }
 

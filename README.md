@@ -17,16 +17,14 @@
 # Recommended: enter flake dev environment, then build
 nix develop -c cargo build -p mihomo-cli
 
-# Merge with template and remote subscription (output defaults to
+# Merge with default (bundled) template and remote subscription (output defaults to
 # ~/.config/mihomocli/output/config.yaml). The default User-Agent is
 # 'clash-verge/v2.4.2', which often yields Clash YAML with rules.
 mihomo-cli merge \
-  --template examples/template.yaml \
   --subscription "https://example.com/subscription"
 
 # If your provider only returns base64/share-link lists, explicitly allow it:
 mihomo-cli merge \
-  --template examples/template.yaml \
   --subscription "https://example.com/base64" \
   --subscription-allow-base64
 
@@ -43,12 +41,10 @@ Example with a real provider URL (adjust to your environment/network):
 
 ```bash
 mihomo-cli merge \
-  --template examples/default.yaml \
   --subscription "https://example.com/sub.yaml"
 
 # If you need to override UA for debugging:
 mihomo-cli merge \
-  --template examples/default.yaml \
   --subscription "https://example.com/sub.yaml" \
   --subscription-ua "clash-verge/v2.4.2"
 ```
@@ -60,7 +56,7 @@ Expected results:
 
 ## CVR‑Aligned Template (no base-config)
 
-To get output structurally matching Clash Verge Rev without supplying `--base-config`, use the provided CVR‑aligned template:
+The CLI auto-installs a CVR-aligned template at `~/.config/mihomocli/templates/cvr_template.yaml` and uses it by default when `--template` is omitted. To reference it explicitly or copy for customization:
 
 ```bash
 mihomo-cli merge \
@@ -83,7 +79,7 @@ mihomo -d ~/.config/mihomocli/resources -f ~/.config/mihomocli/output/config.yam
 
 - `--subscription-ua <STRING>`: HTTP User-Agent used to fetch subscriptions. Default: `clash-verge/v2.4.2`.
 - `--subscription-allow-base64`: Enable decoding base64/share-link subscriptions (trojan/vmess/ss). Disabled by default to prefer native Clash YAML from providers.
-- `--no-dev-rules [--dev-rules-via <NAME>]`: Dev rules are enabled by default and prepend proxy rules for common developer registries (GitHub/GitLab, Go proxy mirrors, npm/yarn/pnpm, PyPI, crates.io, Kubernetes/k3s registries, Docker/GCR, cache.nixos.org, AI agent APIs such as OpenAI/Claude/Gemini/Goose/Cursor/OpenCode, etc.). Override the target group with `--dev-rules-via` or disable via `--no-dev-rules`.
+- `--no-dev-rules [--dev-rules-via <NAME>]`: Dev rules are enabled by default and prepend proxy rules for common developer registries (GitHub/GitLab, Go proxy mirrors, npm/yarn/pnpm, PyPI, crates.io, Kubernetes/k3s registries, Docker/GCR, cache.nixos.org, AI agent APIs such as OpenAI/Claude/Gemini/Cursor/OpenCode, etc.). Override the target group with `--dev-rules-via` or disable via `--no-dev-rules`.
 - `--dev-rules-show`: Print the generated dev rule list (useful for inspection without modifying output).
 
 ## Cache and Quick Rules
