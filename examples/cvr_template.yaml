@@ -70,6 +70,7 @@ external-controller-cors:
   allow-private-network: true
   allow-origins:
     - '*'
+external-controller-unix: /run/mihomo.sock
 profile:
   store-selected: true
 
