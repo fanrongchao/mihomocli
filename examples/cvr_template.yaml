@@ -70,12 +70,9 @@ external-controller-cors:
   allow-private-network: true
   allow-origins:
     - '*'
-external-controller-unix: /run/clash-verge-rev/verge-mihomo.sock
-
 profile:
   store-selected: true
 
 # Intentionally leave proxy-groups and rules empty so the provider subscription fully defines them.
 proxy-groups: []
 rules: []
-
