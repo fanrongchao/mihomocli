@@ -412,12 +412,6 @@ fn build_dev_rules(via: &str) -> Vec<String> {
         ("DOMAIN-SUFFIX", "static.crates.io"),
         ("DOMAIN-SUFFIX", "rustup.rs"),
         ("DOMAIN-SUFFIX", "static.rust-lang.org"),
-        // Java/JVM ecosystem
-        ("DOMAIN-SUFFIX", "maven.org"),
-        ("DOMAIN-SUFFIX", "repo1.maven.org"),
-        ("DOMAIN-SUFFIX", "repo.maven.apache.org"),
-        ("DOMAIN-SUFFIX", "services.gradle.org"),
-        ("DOMAIN-SUFFIX", "gradle.org"),
         // Containers & registries
         ("DOMAIN-SUFFIX", "docker.com"),
         ("DOMAIN-SUFFIX", "docker.io"),
@@ -429,10 +423,12 @@ fn build_dev_rules(via: &str) -> Vec<String> {
         ("DOMAIN-SUFFIX", "k8s.gcr.io"),
         ("DOMAIN-SUFFIX", "gcr.io"),
         ("DOMAIN-SUFFIX", "pkg.dev"),
+        ("DOMAIN-SUFFIX", "dl.k8s.io"),
+        ("DOMAIN-SUFFIX", "packages.cloud.google.com"),
+        ("DOMAIN-SUFFIX", "apt.kubernetes.io"),
+        ("DOMAIN-SUFFIX", "storage.googleapis.com"),
         // Misc build tooling & mirrors
         ("DOMAIN-SUFFIX", "deno.land"),
-        ("DOMAIN-SUFFIX", "rubygems.org"),
-        ("DOMAIN-SUFFIX", "bundler.io"),
         ("DOMAIN-SUFFIX", "packagist.org"),
         ("DOMAIN-SUFFIX", "repo.packagist.org"),
         ("DOMAIN-SUFFIX", "clojars.org"),
@@ -464,6 +460,7 @@ mod tests {
             "DOMAIN-SUFFIX,pypi.org,",
             "DOMAIN-SUFFIX,crates.io,",
             "DOMAIN,cache.nixos.org,",
+            "DOMAIN-SUFFIX,dl.k8s.io,",
         ] {
             assert!(rules.iter().any(|rule| rule.starts_with(prefix)), "missing {prefix}");
         }
