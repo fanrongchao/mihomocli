@@ -34,7 +34,7 @@ Key flags:
 - `-s, --subscription <SRC>`: Extra source (URL or local YAML). Repeatable.
 - `--output <PATH>`: Destination for merged config. Defaults to `~/.config/mihomocli/output/config.yaml`.
 - `--stdout`: Print merged YAML to stdout instead of writing to disk.
-- `--dev-rules`: Prepend proxy rules for common developer registries (GitHub/GitLab, Go module proxies, npm/yarn/pnpm, PyPI, crates.io, Kubernetes registries, Docker/GCR, cache.nixos.org, etc.).
+- `--dev-rules`: Prepend proxy rules for common developer registries (GitHub/GitLab, Go module proxies, npm/yarn/pnpm, PyPI, crates.io, Kubernetes/k3s registries, Docker/GCR, cache.nixos.org, etc.).
 - `--dev-rules-via <NAME>`: Proxy/group tag used by `--dev-rules` (default: `Proxy`).
 - `--dev-rules-show`: Print the generated dev rule list (even without applying it).
 - `--subscription-ua <STRING>`: HTTP User-Agent used when fetching subscriptions. Default: `clash-verge/v2.4.2`.

@@ -389,7 +389,9 @@ fn build_dev_rules(via: &str) -> Vec<String> {
         // Go modules
         ("DOMAIN-SUFFIX", "golang.org"),
         ("DOMAIN-SUFFIX", "go.dev"),
+        ("DOMAIN-SUFFIX", "golang.google.cn"),
         ("DOMAIN-SUFFIX", "proxy.golang.org"),
+        ("DOMAIN-SUFFIX", "proxy.golang.com"),
         ("DOMAIN-SUFFIX", "sum.golang.org"),
         ("DOMAIN-SUFFIX", "goproxy.cn"),
         ("DOMAIN-SUFFIX", "goproxy.io"),
@@ -411,6 +413,9 @@ fn build_dev_rules(via: &str) -> Vec<String> {
         ("DOMAIN-SUFFIX", "crates.io"),
         ("DOMAIN-SUFFIX", "static.crates.io"),
         ("DOMAIN-SUFFIX", "rustup.rs"),
+        ("DOMAIN-SUFFIX", "sh.rustup.rs"),
+        ("DOMAIN-SUFFIX", "rust-lang.org"),
+        ("DOMAIN-SUFFIX", "doc.rust-lang.org"),
         ("DOMAIN-SUFFIX", "static.rust-lang.org"),
         // Containers & registries
         ("DOMAIN-SUFFIX", "docker.com"),
@@ -427,6 +432,10 @@ fn build_dev_rules(via: &str) -> Vec<String> {
         ("DOMAIN-SUFFIX", "packages.cloud.google.com"),
         ("DOMAIN-SUFFIX", "apt.kubernetes.io"),
         ("DOMAIN-SUFFIX", "storage.googleapis.com"),
+        ("DOMAIN-SUFFIX", "k3s.io"),
+        ("DOMAIN-SUFFIX", "update.k3s.io"),
+        ("DOMAIN-SUFFIX", "rancher.com"),
+        ("DOMAIN-SUFFIX", "rancher.io"),
         // Misc build tooling & mirrors
         ("DOMAIN-SUFFIX", "deno.land"),
         ("DOMAIN-SUFFIX", "packagist.org"),
@@ -459,6 +468,9 @@ mod tests {
             "DOMAIN-SUFFIX,registry.npmjs.org,",
             "DOMAIN-SUFFIX,pypi.org,",
             "DOMAIN-SUFFIX,crates.io,",
+            "DOMAIN-SUFFIX,golang.google.cn,",
+            "DOMAIN-SUFFIX,rust-lang.org,",
+            "DOMAIN-SUFFIX,k3s.io,",
             "DOMAIN,cache.nixos.org,",
             "DOMAIN-SUFFIX,dl.k8s.io,",
         ] {
