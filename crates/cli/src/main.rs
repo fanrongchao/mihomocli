@@ -454,7 +454,6 @@ fn build_dev_rules(via: &str) -> Vec<String> {
         ("DOMAIN-SUFFIX", "gemini.google.com"),
         ("DOMAIN-SUFFIX", "generativelanguage.googleapis.com"),
         ("DOMAIN-SUFFIX", "ai.google.dev"),
-        ("DOMAIN-SUFFIX", "api.goose.ai"),
         ("DOMAIN-SUFFIX", "cursor.sh"),
         ("DOMAIN-SUFFIX", "api.cursor.sh"),
     ];
