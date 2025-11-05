@@ -375,18 +375,69 @@ fn resolve_base_path(paths: &AppPaths, provided: &Path) -> PathBuf {
 const DEFAULT_DEV_RULE_VIA: &str = "Proxy";
 
 fn build_dev_rules(via: &str) -> Vec<String> {
+    // Common developer ecosystems that frequently require proxy access when fetching
+    // dependencies, Docker images, or build tool artifacts.
     const DEV_RULE_TARGETS: &[(&str, &str)] = &[
+        // Git & source hosting
         ("DOMAIN-SUFFIX", "github.com"),
         ("DOMAIN-SUFFIX", "githubusercontent.com"),
         ("DOMAIN-SUFFIX", "githubassets.com"),
         ("DOMAIN-SUFFIX", "githubstatic.com"),
+        ("DOMAIN-SUFFIX", "ghcr.io"),
+        ("DOMAIN-SUFFIX", "gitlab.com"),
+        ("DOMAIN-SUFFIX", "gitee.com"),
+        // Go modules
+        ("DOMAIN-SUFFIX", "golang.org"),
+        ("DOMAIN-SUFFIX", "go.dev"),
+        ("DOMAIN-SUFFIX", "proxy.golang.org"),
+        ("DOMAIN-SUFFIX", "sum.golang.org"),
+        ("DOMAIN-SUFFIX", "goproxy.cn"),
+        ("DOMAIN-SUFFIX", "goproxy.io"),
+        // Node.js ecosystem
+        ("DOMAIN-SUFFIX", "npmjs.com"),
+        ("DOMAIN-SUFFIX", "npmjs.org"),
+        ("DOMAIN-SUFFIX", "registry.npmjs.org"),
+        ("DOMAIN-SUFFIX", "registry.npmmirror.com"),
+        ("DOMAIN-SUFFIX", "nodejs.org"),
+        ("DOMAIN-SUFFIX", "yarnpkg.com"),
+        ("DOMAIN-SUFFIX", "pnpm.io"),
+        ("DOMAIN-SUFFIX", "unpkg.com"),
+        ("DOMAIN-SUFFIX", "npmmirror.com"),
+        // Python ecosystem
+        ("DOMAIN-SUFFIX", "pypi.org"),
+        ("DOMAIN-SUFFIX", "pythonhosted.org"),
+        ("DOMAIN-SUFFIX", "files.pythonhosted.org"),
+        // Rust ecosystem
+        ("DOMAIN-SUFFIX", "crates.io"),
+        ("DOMAIN-SUFFIX", "static.crates.io"),
+        ("DOMAIN-SUFFIX", "rustup.rs"),
+        ("DOMAIN-SUFFIX", "static.rust-lang.org"),
+        // Java/JVM ecosystem
+        ("DOMAIN-SUFFIX", "maven.org"),
+        ("DOMAIN-SUFFIX", "repo1.maven.org"),
+        ("DOMAIN-SUFFIX", "repo.maven.apache.org"),
+        ("DOMAIN-SUFFIX", "services.gradle.org"),
+        ("DOMAIN-SUFFIX", "gradle.org"),
+        // Containers & registries
         ("DOMAIN-SUFFIX", "docker.com"),
         ("DOMAIN-SUFFIX", "docker.io"),
         ("DOMAIN-SUFFIX", "dockerusercontent.com"),
         ("DOMAIN-SUFFIX", "registry-1.docker.io"),
-        ("DOMAIN-SUFFIX", "gcr.io"),
+        ("DOMAIN-SUFFIX", "download.docker.com"),
+        ("DOMAIN-SUFFIX", "quay.io"),
+        ("DOMAIN-SUFFIX", "registry.k8s.io"),
         ("DOMAIN-SUFFIX", "k8s.gcr.io"),
+        ("DOMAIN-SUFFIX", "gcr.io"),
         ("DOMAIN-SUFFIX", "pkg.dev"),
+        // Misc build tooling & mirrors
+        ("DOMAIN-SUFFIX", "deno.land"),
+        ("DOMAIN-SUFFIX", "rubygems.org"),
+        ("DOMAIN-SUFFIX", "bundler.io"),
+        ("DOMAIN-SUFFIX", "packagist.org"),
+        ("DOMAIN-SUFFIX", "repo.packagist.org"),
+        ("DOMAIN-SUFFIX", "clojars.org"),
+        ("DOMAIN-SUFFIX", "cdn.jsdelivr.net"),
+        ("DOMAIN-SUFFIX", "dl-cdn.alpinelinux.org"),
         ("DOMAIN", "cache.nixos.org"),
     ];
 
@@ -407,9 +458,15 @@ mod tests {
         assert!(rules
             .iter()
             .all(|rule| rule.ends_with(&format!(",{}", via))));
-        assert!(rules
-            .iter()
-            .any(|rule| rule.starts_with("DOMAIN-SUFFIX,github.com,")));
+        for prefix in [
+            "DOMAIN-SUFFIX,github.com,",
+            "DOMAIN-SUFFIX,registry.npmjs.org,",
+            "DOMAIN-SUFFIX,pypi.org,",
+            "DOMAIN-SUFFIX,crates.io,",
+            "DOMAIN,cache.nixos.org,",
+        ] {
+            assert!(rules.iter().any(|rule| rule.starts_with(prefix)), "missing {prefix}");
+        }
     }
 }
 
