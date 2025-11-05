@@ -2,7 +2,7 @@
 name = "mihomo-cli"
 version = "0.1.0"
 edition = "2021"
-authors = ["mihomo-tui contributors"]
+authors = ["mihomocli contributors"]
 license = "MIT"
 description = "Command line interface for mihomo subscription merging"
 

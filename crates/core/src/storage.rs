@@ -16,8 +16,8 @@ pub struct AppPaths {
 impl AppPaths {
     pub fn new() -> anyhow::Result<Self> {
         let base = BaseDirs::new().ok_or_else(|| anyhow!("failed to resolve base directories"))?;
-        let config_dir = base.home_dir().join(".config/mihomo-tui");
-        let cache_dir = base.home_dir().join(".cache/mihomo-tui/subscriptions");
+        let config_dir = base.home_dir().join(".config/mihomocli");
+        let cache_dir = base.home_dir().join(".cache/mihomocli/subscriptions");
         Ok(Self {
             config_dir,
             cache_dir,

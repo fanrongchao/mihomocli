@@ -2,7 +2,7 @@
 name = "mihomo-core"
 version = "0.1.0"
 edition = "2021"
-authors = ["mihomo-tui contributors"]
+authors = ["mihomocli contributors"]
 license = "MIT"
 description = "Core logic for mihomo subscription merging"
 

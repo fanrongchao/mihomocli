@@ -7,7 +7,7 @@
 - Clash YAML parsing; optional share-link decoding (disabled by default)
 - Template + subscription merge identical to clash-verge-rev semantics
 - Optional base-config inheritance (`--base-config`) to reuse existing rules/groups
-- Auto-downloads `Country.mmdb`, `geoip.dat`, `geosite.dat` into `~/.config/mihomo-tui/resources/`
+- Auto-downloads `Country.mmdb`, `geoip.dat`, `geosite.dat` into `~/.config/mihomocli/resources/`
 - Caches last used subscription URL (for quick re-run without args)
 - Manage quick custom domain->proxy rules (`manage custom add/list/remove`)
 
@@ -18,7 +18,7 @@
 nix develop -c cargo build -p mihomo-cli
 
 # Merge with template and remote subscription (output defaults to
-# ~/.config/mihomo-tui/output/config.yaml). The default User-Agent is
+# ~/.config/mihomocli/output/config.yaml). The default User-Agent is
 # 'clash-verge/v2.4.2', which often yields Clash YAML with rules.
 mihomo-cli merge \
   --template examples/template.yaml \
@@ -31,7 +31,7 @@ mihomo-cli merge \
   --subscription-allow-base64
 
 # Want clash-verge-rev parity? Drop your clash-verge.yaml at
-# ~/.config/mihomo-tui/base-config.yaml (or pass --base-config) so ports/dns/
+# ~/.config/mihomocli/base-config.yaml (or pass --base-config) so ports/dns/
 # rules/groups are inherited automatically.
 ```
 
@@ -54,8 +54,8 @@ mihomo-cli merge \
 ```
 
 Expected results:
-- Resources `Country.mmdb`, `geoip.dat`, `geosite.dat` are auto-downloaded into `~/.config/mihomo-tui/resources/` if missing.
-- Output written to `~/.config/mihomo-tui/output/config.yaml` unless `--stdout` is used.
+- Resources `Country.mmdb`, `geoip.dat`, `geosite.dat` are auto-downloaded into `~/.config/mihomocli/resources/` if missing.
+- Output written to `~/.config/mihomocli/output/config.yaml` unless `--stdout` is used.
 - Merged YAML contains many DOMAIN-SUFFIX rules from the provider.
 
 ## CVR‑Aligned Template (no base-config)
@@ -76,7 +76,7 @@ Notes:
 Run Mihomo with the generated configuration and resources:
 
 ```bash
-mihomo -d ~/.config/mihomo-tui/resources -f ~/.config/mihomo-tui/output/config.yaml
+mihomo -d ~/.config/mihomocli/resources -f ~/.config/mihomocli/output/config.yaml
 ```
 
 ## CLI Flags of Interest

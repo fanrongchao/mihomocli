@@ -4,7 +4,7 @@
 ############################################################
 # 1. 项目信息
 ############################################################
-project_name: "mihomo-cli / mihomo-tui"
+project_name: "mihomo-cli / mihomocli"
 language: "Rust"
 rust_edition: "2021"
 description: >
@@ -55,11 +55,11 @@ workspace_layout:
 ############################################################
 # 所有路径要支持 Linux / NixOS，默认走用户目录
 config_paths:
-  app_config: "~/.config/mihomo-tui/app.yaml"
-  subscriptions: "~/.config/mihomo-tui/subscriptions.yaml"
-  templates_dir: "~/.config/mihomo-tui/templates/"
-  cache_dir: "~/.cache/mihomo-tui/subscriptions/"
-  output_path: "~/.config/mihomo-tui/output/config.yaml"
+  app_config: "~/.config/mihomocli/app.yaml"
+  subscriptions: "~/.config/mihomocli/subscriptions.yaml"
+  templates_dir: "~/.config/mihomocli/templates/"
+  cache_dir: "~/.cache/mihomocli/subscriptions/"
+  output_path: "~/.config/mihomocli/output/config.yaml"
 # 如果目录不存在要自动创建
 
 ############################################################
@@ -101,7 +101,7 @@ rust_struct_subscription: |
   fn default_true() -> bool { true }
 
 subscription_storage_format: |
-  # ~/.config/mihomo-tui/subscriptions.yaml
+  # ~/.config/mihomocli/subscriptions.yaml
   current: "main"
   items:
     - id: "main"
@@ -118,7 +118,7 @@ subscription_storage_format: |
 # 5.2 模板（Template）
 template_rules: |
   - 模板就是一个本地 YAML，作为“骨架配置”
-  - 放在 ~/.config/mihomo-tui/templates/ 下
+  - 放在 ~/.config/mihomocli/templates/ 下
   - 允许多个模板，TUI 里可切换当前模板
   - 模板负责全局参数：端口、mode、allow-lan、log-level、external-controller、proxy-groups 框架
   - 订阅负责提供：proxies、proxy-groups(补充)、rules(补充)
@@ -126,7 +126,7 @@ template_rules: |
   - 当用户指定 base-config 时，模板提供的结构在合并节点后再被 base-config 覆盖（端口、DNS、rules、proxy-groups 等），行为对齐 clash-verge-rev
 
 template_example: |
-  # ~/.config/mihomo-tui/templates/default.yaml
+  # ~/.config/mihomocli/templates/default.yaml
   port: 7890
   socks-port: 7891
   redir-port: 7892
@@ -268,7 +268,7 @@ merge_tests_to_generate: |
 fetch_requirements: |
   - 使用 reqwest 异步拉取
   - 如果订阅有 etag/last-modified，下次请求带上
-  - 如果返回 304 或网络失败，就读 ~/.cache/mihomo-tui/subscriptions/{id}.yaml
+  - 如果返回 304 或网络失败，就读 ~/.cache/mihomocli/subscriptions/{id}.yaml
   - 拉取成功后要写入缓存
   - 订阅统一解析成 ClashConfig，解析失败要在 TUI 显示失败
   - 支持 http/https，暂不必支持 socks（预留）
@@ -369,7 +369,7 @@ generation_steps: |
      - ui.rs 画布局
      - screens/* 各自渲染
   5. 在 tui 里先用 mock 数据跑通界面，再把 core 注进来
-  6. 最后在 main.rs 里加命令：按 w 落地到 ~/.config/mihomo-tui/output/config.yaml
+  6. 最后在 main.rs 里加命令：按 w 落地到 ~/.config/mihomocli/output/config.yaml
 
 ############################################################
 # 12. 注意事项
@@ -381,7 +381,7 @@ notes: |
   - 错误要能回传到 TUI，用一个简单的 status 字段显示
   - 代码要能在 NixOS 上编译，尽量避免奇怪的系统依赖
   - 不需要 tauri / gtk / electron，只要终端
-  - CLI 启动时需要检查 `~/.config/mihomo-tui/resources/`，若缺失则自动下载 `Country.mmdb` / `geoip.dat` / `geosite.dat`，与 clash-verge-rev 行为保持一致
+  - CLI 启动时需要检查 `~/.config/mihomocli/resources/`，若缺失则自动下载 `Country.mmdb` / `geoip.dat` / `geosite.dat`，与 clash-verge-rev 行为保持一致
   - 项目内提供 `resources/base-config.example.yaml` 说明 base-config 结构，实际使用可通过 `--base-config` 指向真实配置文件
   - **未来工作**：如需完全复刻 clash-verge-rev 的最终 YAML 生成流程，需要移植其增强模板（rules/proxy-groups/scripts）和 runtime 配置合并逻辑；当前版本通过引用现有的 base-config 来达成等价输出
 
@@ -396,7 +396,7 @@ codex_prompt_stub: |
 # 14. 应用配置与快捷规则（新增）
 ############################################################
 app_config: |
-  # ~/.config/mihomo-tui/app.yaml
+  # ~/.config/mihomocli/app.yaml
   last_subscription_url: "https://example.com/sub.yaml"  # 最近一次成功的订阅 URL（在用户未提供 -s 时可复用）
   custom_rules:                                            # 用户快捷规则，优先级高于订阅/base-config
     - domain: cache.nixos.org

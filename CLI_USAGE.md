@@ -28,11 +28,11 @@ mihomo-cli merge --template <template_path> [OPTIONS]
 ```
 
 Key flags:
-- `--template <PATH>`: Template YAML file. Relative paths resolve under `~/.config/mihomo-tui/templates/`.
-- `--base-config <PATH>`: Optional Clash config whose ports/dns/rules/group metadata should be inherited (e.g., `clash-verge.yaml`). If omitted, the CLI auto-loads `~/.config/mihomo-tui/base-config.yaml` when present.
-- `--subscriptions-file <PATH>`: Custom subscriptions list (defaults to `~/.config/mihomo-tui/subscriptions.yaml`).
+- `--template <PATH>`: Template YAML file. Relative paths resolve under `~/.config/mihomocli/templates/`.
+- `--base-config <PATH>`: Optional Clash config whose ports/dns/rules/group metadata should be inherited (e.g., `clash-verge.yaml`). If omitted, the CLI auto-loads `~/.config/mihomocli/base-config.yaml` when present.
+- `--subscriptions-file <PATH>`: Custom subscriptions list (defaults to `~/.config/mihomocli/subscriptions.yaml`).
 - `-s, --subscription <SRC>`: Extra source (URL or local YAML). Repeatable.
-- `--output <PATH>`: Destination for merged config. Defaults to `~/.config/mihomo-tui/output/config.yaml`.
+- `--output <PATH>`: Destination for merged config. Defaults to `~/.config/mihomocli/output/config.yaml`.
 - `--stdout`: Print merged YAML to stdout instead of writing to disk.
 - `--subscription-ua <STRING>`: HTTP User-Agent used when fetching subscriptions. Default: `clash-verge/v2.4.2`.
 - `--subscription-allow-base64`: Enable decoding base64/share-link lists (trojan/vmess/ss). Disabled by default to prefer provider-native Clash YAML.
@@ -41,11 +41,11 @@ Key flags:
 ## Configuration Files
 
 Runtime directories (auto-created):
-- Templates: `~/.config/mihomo-tui/templates/`
-- Subscriptions list: `~/.config/mihomo-tui/subscriptions.yaml`
-- Cache: `~/.cache/mihomo-tui/subscriptions/`
-- Output: `~/.config/mihomo-tui/output/config.yaml`
-- Resources (Country.mmdb, geoip.dat, geosite.dat): `~/.config/mihomo-tui/resources/` (use `mihomo -d ~/.config/mihomo-tui/resources ...`)
+- Templates: `~/.config/mihomocli/templates/`
+- Subscriptions list: `~/.config/mihomocli/subscriptions.yaml`
+- Cache: `~/.cache/mihomocli/subscriptions/`
+- Output: `~/.config/mihomocli/output/config.yaml`
+- Resources (Country.mmdb, geoip.dat, geosite.dat): `~/.config/mihomocli/resources/` (use `mihomo -d ~/.config/mihomocli/resources ...`)
 
 The CLI accepts Clash YAML subscriptions directly, but it can also decode common
 link-based feeds (trojan/vmess/shadowsocks) even when they are delivered via
@@ -64,7 +64,7 @@ Preview merged YAML without writing to disk, combining a local subscription and 
 ```bash
 mihomo-cli merge \
   --template examples/template.yaml \
-  --subscription ~/.config/mihomo-tui/subscription-local.yaml \
+  --subscription ~/.config/mihomocli/subscription-local.yaml \
   --subscription https://example.com/sub.yaml \
   --stdout
 ```
@@ -115,7 +115,7 @@ mihomo-cli merge \
   --subscription "https://example.com/sub.yaml"
 ```
 
-Customize `secret` or controller settings by copying the template to `~/.config/mihomo-tui/templates/` and editing as needed.
+Customize `secret` or controller settings by copying the template to `~/.config/mihomocli/templates/` and editing as needed.
 ### Cached last URL
 
 Reuse the last successful subscription URL without retyping it:

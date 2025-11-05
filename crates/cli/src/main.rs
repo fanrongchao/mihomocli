@@ -16,7 +16,7 @@ use tracing_subscriber::EnvFilter;
     author,
     version,
     about = "Mihomo subscription merge CLI",
-    long_about = "Generate Mihomo/Clash configuration files by combining a template with one or more subscriptions.\n\nUse `mihomo-cli merge --help` for command-specific options and defaults for runtime directories under ~/.config/mihomo-tui.",
+    long_about = "Generate Mihomo/Clash configuration files by combining a template with one or more subscriptions.\n\nUse `mihomo-cli merge --help` for command-specific options and defaults for runtime directories under ~/.config/mihomocli.",
     arg_required_else_help = true
 )]
 struct Cli {
@@ -32,7 +32,7 @@ enum Commands {
         after_long_help = r#"
 Examples:
 
-  Minimal (template resolves under ~/.config/mihomo-tui/templates):
+  Minimal (template resolves under ~/.config/mihomocli/templates):
 
     mihomo-cli merge --template default.yaml
 
@@ -42,10 +42,10 @@ Examples:
     mihomo-cli merge \
       --template default.yaml \
       --base-config base-config.yaml \
-      --subscriptions-file ~/.config/mihomo-tui/subscriptions.yaml \
+      --subscriptions-file ~/.config/mihomocli/subscriptions.yaml \
       -s https://example.com/sub.yaml \
       -s ./extras/local.yaml \
-      --output ~/.config/mihomo-tui/output/config.yaml
+      --output ~/.config/mihomocli/output/config.yaml
 
 
   Print to stdout instead of writing a file:
@@ -55,11 +55,11 @@ Examples:
 
 Notes:
 
-  - Relative paths for --template are resolved under ~/.config/mihomo-tui/templates/.
+  - Relative paths for --template are resolved under ~/.config/mihomocli/templates/.
 
-  - Relative paths for --base-config are resolved under ~/.config/mihomo-tui/.
+  - Relative paths for --base-config are resolved under ~/.config/mihomocli/.
 
-  - If --subscriptions-file is omitted, the default list at ~/.config/mihomo-tui/subscriptions.yaml is used.
+  - If --subscriptions-file is omitted, the default list at ~/.config/mihomocli/subscriptions.yaml is used.
 
   - Multiple -s/--subscription entries may be provided (URL or file path).
 
@@ -93,7 +93,7 @@ struct MergeArgs {
     #[arg(long)]
     base_config: Option<PathBuf>,
 
-    /// Optional subscriptions YAML definition (defaults to ~/.config/mihomo-tui/subscriptions.yaml).
+    /// Optional subscriptions YAML definition (defaults to ~/.config/mihomocli/subscriptions.yaml).
     #[arg(long)]
     subscriptions_file: Option<PathBuf>,
 

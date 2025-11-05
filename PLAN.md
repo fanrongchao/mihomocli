@@ -52,7 +52,7 @@ This document tracks concrete improvements to pick up next time. Items are order
      - Fields: `endpoint` (e.g., `http://127.0.0.1:9090/configs`), optional `secret`.
      - Method: `deploy(&self, yaml)` uploads config (or calls reload endpoint if we choose file‑based).
   3. Add CLI subcommand `deploy http` (or `merge --apply-http`):
-     - `mihomo-cli deploy http --endpoint http://127.0.0.1:9090 --secret <...> --file ~/.config/mihomo-tui/output/config.yaml`
+     - `mihomo-cli deploy http --endpoint http://127.0.0.1:9090 --secret <...> --file ~/.config/mihomocli/output/config.yaml`
      - Or pipeline from merge: `mihomo-cli merge ... --apply-http --endpoint ... --secret ...`.
   4. Add dry‑run flag and timeouts; clear error messages and status output.
   5. Docs: how to enable Mihomo external‑controller and required `secret`, caveats on live edits.
@@ -80,4 +80,3 @@ This document tracks concrete improvements to pick up next time. Items are order
 - Clash/Mihomo external‑controller docs (configs/reload endpoints)
 - CVR repository (runtime settings and updates)
 - Current repo: `examples/cvr_template.yaml`, `crates/core/src/merge.rs`, `crates/cli/src/main.rs`
-
