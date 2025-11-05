@@ -83,7 +83,7 @@ mihomo -d ~/.config/mihomocli/resources -f ~/.config/mihomocli/output/config.yam
 
 - `--subscription-ua <STRING>`: HTTP User-Agent used to fetch subscriptions. Default: `clash-verge/v2.4.2`.
 - `--subscription-allow-base64`: Enable decoding base64/share-link subscriptions (trojan/vmess/ss). Disabled by default to prefer native Clash YAML from providers.
-- `--dev-rules [--dev-rules-via <NAME>]`: Prepend proxy rules for common developer registries (GitHub/GitLab, Go proxy mirrors, npm/yarn/pnpm, PyPI, crates.io, Kubernetes/k3s registries, Docker/GCR, cache.nixos.org, etc.). Defaults to routing via `Proxy`.
+- `--no-dev-rules [--dev-rules-via <NAME>]`: Dev rules are enabled by default and prepend proxy rules for common developer registries (GitHub/GitLab, Go proxy mirrors, npm/yarn/pnpm, PyPI, crates.io, Kubernetes/k3s registries, Docker/GCR, cache.nixos.org, etc.). Override the target group with `--dev-rules-via` or disable via `--no-dev-rules`.
 - `--dev-rules-show`: Print the generated dev rule list (useful for inspection without modifying output).
 
 ## Cache and Quick Rules

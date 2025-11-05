@@ -116,7 +116,7 @@ struct MergeArgs {
     stdout: bool,
 
     /// Prepend common developer domains with proxy rules (GitHub, Docker, GCR, cache.nixos.org).
-    #[arg(long = "dev-rules", default_value_t = false)]
+    #[arg(long = "dev-rules", default_value_t = true)]
     dev_rules: bool,
 
     /// Proxy group/tag used by generated dev rules when --dev-rules is set.
