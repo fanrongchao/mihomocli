@@ -202,7 +202,7 @@ merge_rules_detailed: |
   - `--subscription-allow-base64` 未开启时，不再尝试 base64 解码订阅；
   - 显式开启 `--subscription-allow-base64` 时，允许解析 base64/分享链接清单（trojan/vmess/ss）。
 - 可通过 `--subscription-ua` 覆盖默认 UA。
-- `--dev-rules` 选项会在最终输出前插入一批常用开发依赖域名（GitHub、Docker、GCR、cache.nixos.org）的 proxy 规则，默认指向 `Proxy`，可用 `--dev-rules-via` 覆盖。
+- `--dev-rules` 选项会在最终输出前插入一批常用开发依赖域名（GitHub、Docker、GCR、cache.nixos.org）的 proxy 规则，默认指向 `Proxy`，可用 `--dev-rules-via` 覆盖；需要查看默认列表时可使用 `--dev-rules-show`。
 - 示例提供商（用于本地端到端验证）：
   `https://example.com/sub.yaml`
      - rules:

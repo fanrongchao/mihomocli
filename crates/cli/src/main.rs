@@ -76,6 +76,8 @@ Notes:
   - Use --dev-rules to prepend GitHub, Docker, GCR, and cache.nixos.org rules that force traffic through a proxy.
 
     Change the target proxy/group with --dev-rules-via (defaults to 'Proxy').
+
+  - Use --dev-rules-show to print the generated list (without changing output unless --dev-rules is enabled).
 "#
     )]
     Merge(MergeArgs),
@@ -120,6 +122,10 @@ struct MergeArgs {
     /// Proxy group/tag used by generated dev rules when --dev-rules is set.
     #[arg(long = "dev-rules-via", default_value = DEFAULT_DEV_RULE_VIA)]
     dev_rules_via: String,
+
+    /// Show the dev rule list that would be added (without modifying the result unless --dev-rules is set).
+    #[arg(long = "dev-rules-show", default_value_t = false)]
+    dev_rules_show: bool,
 
     /// Reuse the cached last subscription URL when no -s/--subscription is provided.
     /// If both are set, explicit subscriptions take precedence.
@@ -273,10 +279,15 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
         merged = mihomo_core::merge::apply_base_config(merged, base);
     }
 
-    if args.dev_rules {
-        let mut dev_rules = build_dev_rules(&args.dev_rules_via);
-        dev_rules.extend(merged.rules.into_iter());
-        merged.rules = dev_rules;
+    let mut dev_rules_listing = None;
+    if args.dev_rules || args.dev_rules_show {
+        let list = build_dev_rules(&args.dev_rules_via);
+        if args.dev_rules {
+            let mut combined = list.clone();
+            combined.extend(merged.rules.into_iter());
+            merged.rules = combined;
+        }
+        dev_rules_listing = Some(list);
     }
 
     // Prepend custom quick rules (take precedence)
@@ -312,6 +323,12 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
             format!("failed to write merged config to {}", output_path.display())
         })?;
         println!("merged config written to {}", output_path.display());
+    }
+
+    if let Some(list) = dev_rules_listing.as_ref().filter(|_| args.dev_rules_show) {
+        for rule in list {
+            eprintln!("dev-rule: {}", rule);
+        }
     }
 
     if args.subscriptions_file.is_none() {
