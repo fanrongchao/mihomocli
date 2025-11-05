@@ -83,6 +83,7 @@ mihomo -d ~/.config/mihomocli/resources -f ~/.config/mihomocli/output/config.yam
 
 - `--subscription-ua <STRING>`: HTTP User-Agent used to fetch subscriptions. Default: `clash-verge/v2.4.2`.
 - `--subscription-allow-base64`: Enable decoding base64/share-link subscriptions (trojan/vmess/ss). Disabled by default to prefer native Clash YAML from providers.
+- `--dev-rules [--dev-rules-via <NAME>]`: Prepend proxy rules for GitHub, Docker, GCR, and cache.nixos.org downloads. Defaults to routing via `Proxy`.
 
 ## Cache and Quick Rules
 

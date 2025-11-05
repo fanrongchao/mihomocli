@@ -72,6 +72,10 @@ Notes:
   - Use --subscription-allow-base64 to enable decoding base64/share-link subscriptions (trojan/vmess/ss).
 
     Disabled by default; when disabled, only native Clash YAML is accepted from providers.
+
+  - Use --dev-rules to prepend GitHub, Docker, GCR, and cache.nixos.org rules that force traffic through a proxy.
+
+    Change the target proxy/group with --dev-rules-via (defaults to 'Proxy').
 "#
     )]
     Merge(MergeArgs),
@@ -108,6 +112,14 @@ struct MergeArgs {
     /// Write merged config to stdout instead of a file.
     #[arg(long)]
     stdout: bool,
+
+    /// Prepend common developer domains with proxy rules (GitHub, Docker, GCR, cache.nixos.org).
+    #[arg(long = "dev-rules", default_value_t = false)]
+    dev_rules: bool,
+
+    /// Proxy group/tag used by generated dev rules when --dev-rules is set.
+    #[arg(long = "dev-rules-via", default_value = DEFAULT_DEV_RULE_VIA)]
+    dev_rules_via: String,
 
     /// Reuse the cached last subscription URL when no -s/--subscription is provided.
     /// If both are set, explicit subscriptions take precedence.
@@ -261,6 +273,12 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
         merged = mihomo_core::merge::apply_base_config(merged, base);
     }
 
+    if args.dev_rules {
+        let mut dev_rules = build_dev_rules(&args.dev_rules_via);
+        dev_rules.extend(merged.rules.into_iter());
+        merged.rules = dev_rules;
+    }
+
     // Prepend custom quick rules (take precedence)
     if !app_cfg.custom_rules.is_empty() {
         let mut quick = Vec::with_capacity(app_cfg.custom_rules.len());
@@ -334,6 +352,47 @@ fn resolve_base_path(paths: &AppPaths, provided: &Path) -> PathBuf {
         } else {
             provided.to_path_buf()
         }
+    }
+}
+
+const DEFAULT_DEV_RULE_VIA: &str = "Proxy";
+
+fn build_dev_rules(via: &str) -> Vec<String> {
+    const DEV_RULE_TARGETS: &[(&str, &str)] = &[
+        ("DOMAIN-SUFFIX", "github.com"),
+        ("DOMAIN-SUFFIX", "githubusercontent.com"),
+        ("DOMAIN-SUFFIX", "githubassets.com"),
+        ("DOMAIN-SUFFIX", "githubstatic.com"),
+        ("DOMAIN-SUFFIX", "docker.com"),
+        ("DOMAIN-SUFFIX", "docker.io"),
+        ("DOMAIN-SUFFIX", "dockerusercontent.com"),
+        ("DOMAIN-SUFFIX", "registry-1.docker.io"),
+        ("DOMAIN-SUFFIX", "gcr.io"),
+        ("DOMAIN-SUFFIX", "k8s.gcr.io"),
+        ("DOMAIN-SUFFIX", "pkg.dev"),
+        ("DOMAIN", "cache.nixos.org"),
+    ];
+
+    DEV_RULE_TARGETS
+        .iter()
+        .map(|(kind, target)| format!("{kind},{target},{via}"))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dev_rules_use_selected_via() {
+        let via = "MyProxy";
+        let rules = build_dev_rules(via);
+        assert!(rules
+            .iter()
+            .all(|rule| rule.ends_with(&format!(",{}", via))));
+        assert!(rules
+            .iter()
+            .any(|rule| rule.starts_with("DOMAIN-SUFFIX,github.com,")));
     }
 }
 

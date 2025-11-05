@@ -34,6 +34,8 @@ Key flags:
 - `-s, --subscription <SRC>`: Extra source (URL or local YAML). Repeatable.
 - `--output <PATH>`: Destination for merged config. Defaults to `~/.config/mihomocli/output/config.yaml`.
 - `--stdout`: Print merged YAML to stdout instead of writing to disk.
+- `--dev-rules`: Prepend proxy rules for common developer domains (GitHub, Docker Hub, GCR, cache.nixos.org).
+- `--dev-rules-via <NAME>`: Proxy/group tag used by `--dev-rules` (default: `Proxy`).
 - `--subscription-ua <STRING>`: HTTP User-Agent used when fetching subscriptions. Default: `clash-verge/v2.4.2`.
 - `--subscription-allow-base64`: Enable decoding base64/share-link lists (trojan/vmess/ss). Disabled by default to prefer provider-native Clash YAML.
 - `--use-last`: Reuse the cached last subscription URL when no `-s/--subscription` is provided.
