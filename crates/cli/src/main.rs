@@ -444,6 +444,21 @@ fn build_dev_rules(via: &str) -> Vec<String> {
         ("DOMAIN-SUFFIX", "cdn.jsdelivr.net"),
         ("DOMAIN-SUFFIX", "dl-cdn.alpinelinux.org"),
         ("DOMAIN", "cache.nixos.org"),
+        // AI coding agents / API endpoints
+        ("DOMAIN-SUFFIX", "openai.com"),
+        ("DOMAIN-SUFFIX", "api.openai.com"),
+        ("DOMAIN-SUFFIX", "platform.openai.com"),
+        ("DOMAIN-SUFFIX", "anthropic.com"),
+        ("DOMAIN-SUFFIX", "api.anthropic.com"),
+        ("DOMAIN-SUFFIX", "claude.ai"),
+        ("DOMAIN-SUFFIX", "gemini.google.com"),
+        ("DOMAIN-SUFFIX", "generativelanguage.googleapis.com"),
+        ("DOMAIN-SUFFIX", "ai.google.dev"),
+        ("DOMAIN-SUFFIX", "goose.ai"),
+        ("DOMAIN-SUFFIX", "api.goose.ai"),
+        ("DOMAIN-SUFFIX", "cursor.sh"),
+        ("DOMAIN-SUFFIX", "api.cursor.sh"),
+        ("DOMAIN-SUFFIX", "opencode.tencent.com"),
     ];
 
     DEV_RULE_TARGETS
@@ -471,6 +486,8 @@ mod tests {
             "DOMAIN-SUFFIX,golang.google.cn,",
             "DOMAIN-SUFFIX,rust-lang.org,",
             "DOMAIN-SUFFIX,k3s.io,",
+            "DOMAIN-SUFFIX,api.openai.com,",
+            "DOMAIN-SUFFIX,claude.ai,",
             "DOMAIN,cache.nixos.org,",
             "DOMAIN-SUFFIX,dl.k8s.io,",
         ] {
