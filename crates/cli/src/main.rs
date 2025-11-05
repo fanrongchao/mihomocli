@@ -458,7 +458,6 @@ fn build_dev_rules(via: &str) -> Vec<String> {
         ("DOMAIN-SUFFIX", "api.goose.ai"),
         ("DOMAIN-SUFFIX", "cursor.sh"),
         ("DOMAIN-SUFFIX", "api.cursor.sh"),
-        ("DOMAIN-SUFFIX", "opencode.tencent.com"),
     ];
 
     DEV_RULE_TARGETS
