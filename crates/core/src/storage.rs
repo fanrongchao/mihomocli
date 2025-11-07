@@ -167,3 +167,229 @@ pub async fn save_app_config(paths: &AppPaths, cfg: &AppConfig) -> anyhow::Resul
     fs::write(paths.app_config_path(), yaml).await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn create_test_paths(temp_dir: &TempDir) -> AppPaths {
+        let config_dir = temp_dir.path().join("config");
+        let cache_dir = temp_dir.path().join("cache");
+        AppPaths {
+            config_dir,
+            cache_dir,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_app_paths_creation() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = create_test_paths(&temp_dir);
+
+        assert_eq!(
+            paths.templates_dir(),
+            temp_dir.path().join("config/templates")
+        );
+        assert_eq!(
+            paths.resources_dir(),
+            temp_dir.path().join("config/resources")
+        );
+        assert_eq!(
+            paths.app_config_path(),
+            temp_dir.path().join("config/app.yaml")
+        );
+        assert_eq!(
+            paths.subscriptions_file(),
+            temp_dir.path().join("config/subscriptions.yaml")
+        );
+        assert_eq!(
+            paths.output_config_path(),
+            temp_dir.path().join("config/output/config.yaml")
+        );
+        assert_eq!(
+            paths.cache_file("test-id"),
+            temp_dir.path().join("cache/test-id.yaml")
+        );
+        assert_eq!(
+            paths.cache_meta_file("test-id"),
+            temp_dir.path().join("cache/test-id.meta.json")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ensure_runtime_dirs() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = create_test_paths(&temp_dir);
+
+        paths.ensure_runtime_dirs().await.unwrap();
+
+        assert!(paths.config_dir().exists());
+        assert!(paths.templates_dir().exists());
+        assert!(paths.resources_dir().exists());
+        assert!(paths.cache_dir().exists());
+        assert!(paths.output_config_path().parent().unwrap().exists());
+    }
+
+    #[tokio::test]
+    async fn test_load_save_subscription_list() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = create_test_paths(&temp_dir);
+        paths.ensure_runtime_dirs().await.unwrap();
+
+        // Test loading non-existent file (should create default)
+        let list = load_subscription_list(&paths).await.unwrap();
+        assert_eq!(list.items.len(), 0);
+        assert_eq!(list.current, None);
+
+        // Test saving and loading
+        let new_list = SubscriptionList {
+            current: Some("test-id".to_string()),
+            items: vec![Subscription {
+                id: "test-id".to_string(),
+                name: "Test Subscription".to_string(),
+                url: Some("https://example.com/sub".to_string()),
+                path: None,
+                last_updated: None,
+                etag: None,
+                last_modified: None,
+                kind: crate::subscription::SubscriptionKind::Clash,
+                enabled: true,
+            }],
+        };
+
+        save_subscription_list(&paths, &new_list).await.unwrap();
+
+        let loaded = load_subscription_list(&paths).await.unwrap();
+        assert_eq!(loaded.current, Some("test-id".to_string()));
+        assert_eq!(loaded.items.len(), 1);
+        assert_eq!(loaded.items[0].name, "Test Subscription");
+    }
+
+    #[tokio::test]
+    async fn test_subscription_list_enabled_filter() {
+        let list = SubscriptionList {
+            current: None,
+            items: vec![
+                Subscription {
+                    id: "enabled1".to_string(),
+                    name: "Enabled 1".to_string(),
+                    url: Some("https://example.com/1".to_string()),
+                    path: None,
+                    last_updated: None,
+                    etag: None,
+                    last_modified: None,
+                    kind: crate::subscription::SubscriptionKind::Clash,
+                    enabled: true,
+                },
+                Subscription {
+                    id: "disabled".to_string(),
+                    name: "Disabled".to_string(),
+                    url: Some("https://example.com/2".to_string()),
+                    path: None,
+                    last_updated: None,
+                    etag: None,
+                    last_modified: None,
+                    kind: crate::subscription::SubscriptionKind::Clash,
+                    enabled: false,
+                },
+                Subscription {
+                    id: "enabled2".to_string(),
+                    name: "Enabled 2".to_string(),
+                    url: Some("https://example.com/3".to_string()),
+                    path: None,
+                    last_updated: None,
+                    etag: None,
+                    last_modified: None,
+                    kind: crate::subscription::SubscriptionKind::Clash,
+                    enabled: true,
+                },
+            ],
+        };
+
+        let enabled: Vec<_> = list.enabled().collect();
+        assert_eq!(enabled.len(), 2);
+        assert_eq!(enabled[0].id, "enabled1");
+        assert_eq!(enabled[1].id, "enabled2");
+    }
+
+    #[tokio::test]
+    async fn test_load_save_app_config() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = create_test_paths(&temp_dir);
+        paths.ensure_runtime_dirs().await.unwrap();
+
+        // Test loading non-existent file (should return default)
+        let config = load_app_config(&paths).await.unwrap();
+        assert_eq!(config.last_subscription_url, None);
+        assert_eq!(config.custom_rules.len(), 0);
+
+        // Test saving and loading with data
+        let new_config = AppConfig {
+            last_subscription_url: Some("https://example.com/sub".to_string()),
+            custom_rules: vec![
+                CustomRule {
+                    domain: "example.com".to_string(),
+                    kind: RuleKind::Domain,
+                    via: "PROXY".to_string(),
+                },
+                CustomRule {
+                    domain: "google.com".to_string(),
+                    kind: RuleKind::DomainSuffix,
+                    via: "DIRECT".to_string(),
+                },
+            ],
+        };
+
+        save_app_config(&paths, &new_config).await.unwrap();
+
+        let loaded = load_app_config(&paths).await.unwrap();
+        assert_eq!(
+            loaded.last_subscription_url,
+            Some("https://example.com/sub".to_string())
+        );
+        assert_eq!(loaded.custom_rules.len(), 2);
+        assert_eq!(loaded.custom_rules[0].domain, "example.com");
+        assert_eq!(loaded.custom_rules[0].kind, RuleKind::Domain);
+        assert_eq!(loaded.custom_rules[1].kind, RuleKind::DomainSuffix);
+    }
+
+    #[tokio::test]
+    async fn test_custom_rule_default_kind() {
+        let yaml = r#"
+domain: example.com
+via: PROXY
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(rule.kind, RuleKind::DomainSuffix); // Default
+    }
+
+    #[tokio::test]
+    async fn test_custom_rule_serialization() {
+        let rule = CustomRule {
+            domain: "test.com".to_string(),
+            kind: RuleKind::DomainKeyword,
+            via: "REJECT".to_string(),
+        };
+
+        let yaml = serde_yaml::to_string(&rule).unwrap();
+        let deserialized: CustomRule = serde_yaml::from_str(&yaml).unwrap();
+
+        assert_eq!(deserialized.domain, "test.com");
+        assert_eq!(deserialized.kind, RuleKind::DomainKeyword);
+        assert_eq!(deserialized.via, "REJECT");
+    }
+
+    #[tokio::test]
+    async fn test_rule_kind_serde() {
+        // Test kebab-case serialization
+        let yaml_domain = serde_yaml::to_string(&RuleKind::Domain).unwrap();
+        assert!(yaml_domain.contains("domain"));
+
+        let yaml_suffix = serde_yaml::to_string(&RuleKind::DomainSuffix).unwrap();
+        assert!(yaml_suffix.contains("domain-suffix"));
+
+        let yaml_keyword = serde_yaml::to_string(&RuleKind::DomainKeyword).unwrap();
+        assert!(yaml_keyword.contains("domain-keyword"));
+    }
+}

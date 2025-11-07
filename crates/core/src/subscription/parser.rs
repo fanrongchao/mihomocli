@@ -462,4 +462,146 @@ mod tests {
             Some("123e4567-e89b-12d3-a456-426614174000")
         );
     }
+
+    #[test]
+    fn parse_shadowsocks_link() {
+        // ss://base64(method:password)@server:port#tag
+        // Base64 encoded: aes-256-gcm:password@ss.example.com:8388
+        let ss_link = "ss://YWVzLTI1Ni1nY206cGFzc3dvcmRAc3MuZXhhbXBsZS5jb206ODM4OA==#SS%20Example";
+        let config = parse_subscription_payload(ss_link).expect("should parse");
+        assert_eq!(config.proxies.len(), 1);
+        let proxy = config.proxies.first().expect("proxy");
+        let map = proxy.as_mapping().expect("mapping");
+        assert_eq!(
+            map.get(&Value::from("type")).and_then(Value::as_str),
+            Some("ss")
+        );
+        assert_eq!(
+            map.get(&Value::from("server")).and_then(Value::as_str),
+            Some("ss.example.com")
+        );
+        assert_eq!(
+            map.get(&Value::from("cipher")).and_then(Value::as_str),
+            Some("aes-256-gcm")
+        );
+        assert_eq!(
+            map.get(&Value::from("password")).and_then(Value::as_str),
+            Some("password")
+        );
+    }
+
+    #[test]
+    fn parse_shadowsocks_plain_format() {
+        let ss_link = "ss://aes-256-gcm:password@ss.example.com:8388#PlainFormat";
+        let config = parse_subscription_payload(ss_link).expect("should parse");
+        assert_eq!(config.proxies.len(), 1);
+        let proxy = config.proxies.first().expect("proxy");
+        let map = proxy.as_mapping().expect("mapping");
+        assert_eq!(
+            map.get(&Value::from("server")).and_then(Value::as_str),
+            Some("ss.example.com")
+        );
+        assert_eq!(
+            map.get(&Value::from("port"))
+                .and_then(Value::as_u64)
+                .map(|v| v as u16),
+            Some(8388)
+        );
+    }
+
+    #[test]
+    fn parse_mixed_share_links() {
+        let mixed = r#"trojan://pass1@example1.com:443#Trojan1
+vmess://eyJwcyI6IlZtZXNzMSIsImFkZCI6ImV4YW1wbGUyLmNvbSIsInBvcnQiOiI0NDMiLCJpZCI6IjEyM2U0NTY3LWU4OWItMTJkMy1hNDU2LTQyNjYxNDE3NDAwMCJ9
+ss://aes-128-gcm:test@example3.com:8388#SS1"#;
+
+        let config = parse_subscription_payload(mixed).expect("should parse");
+        assert_eq!(config.proxies.len(), 3);
+
+        let types: Vec<_> = config
+            .proxies
+            .iter()
+            .filter_map(|p| {
+                p.as_mapping()
+                    .and_then(|m| m.get(&Value::from("type")).and_then(Value::as_str))
+            })
+            .collect();
+        assert!(types.contains(&"trojan"));
+        assert!(types.contains(&"vmess"));
+        assert!(types.contains(&"ss"));
+    }
+
+    #[test]
+    fn parse_direct_yaml_config() {
+        let yaml = r#"
+port: 7890
+proxies:
+  - name: test-proxy
+    type: http
+    server: example.com
+    port: 8080
+rules:
+  - "DOMAIN,example.com,DIRECT"
+"#;
+        let config = parse_subscription_payload(yaml).expect("should parse");
+        assert_eq!(config.port, Some(7890));
+        assert_eq!(config.proxies.len(), 1);
+        assert_eq!(config.rules.len(), 1);
+    }
+
+    #[test]
+    fn parse_invalid_payload_returns_error() {
+        let invalid = "this is not a valid subscription format\nno proxies here";
+        let result = parse_subscription_payload(invalid);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_empty_and_whitespace_input() {
+        // Empty string is actually valid YAML (empty document), so it may parse successfully
+        // Let's test what actually happens
+        let result = parse_subscription_payload_with_options("", ParseOptions { allow_base64: false });
+        if let Ok(config) = result {
+            // If it parses, it should have empty proxies
+            assert_eq!(config.proxies.len(), 0);
+        } else {
+            // Or it returns an error, which is also acceptable
+            assert!(result.is_err());
+        }
+
+        // Whitespace-only should behave similarly
+        let result2 = parse_subscription_payload_with_options("   \n\n  ", ParseOptions { allow_base64: false });
+        if let Ok(config2) = result2 {
+            assert_eq!(config2.proxies.len(), 0);
+        }
+    }
+
+    #[test]
+    fn parse_with_allow_base64_disabled() {
+        let ss_link = "ss://aes-256-gcm:password@ss.example.com:8388#Test";
+        let opts = ParseOptions {
+            allow_base64: false,
+        };
+        // Should still parse plain share links
+        let config = parse_subscription_payload_with_options(ss_link, opts).expect("should parse");
+        assert_eq!(config.proxies.len(), 1);
+    }
+
+    #[test]
+    fn test_is_mostly_printable() {
+        assert!(is_mostly_printable("normal text\n"));
+        assert!(is_mostly_printable("trojan://test@example.com:443"));
+        // String with more than 8 control characters (excluding newline, \r, \t)
+        // \x09 is tab (allowed), so we need more control chars
+        assert!(!is_mostly_printable("\x01\x02\x03\x04\x05\x06\x07\x08\x0b\x0c\x0d\x0e\x0f"));
+        // Mostly control characters should fail
+        assert!(!is_mostly_printable("\x01\x02\x03\x04\x05\x06\x07\x08\x0b"));
+    }
+
+    #[test]
+    fn test_pad_base64() {
+        assert_eq!(pad_base64("YWJj"), "YWJj");
+        assert_eq!(pad_base64("YWJjZA"), "YWJjZA==");
+        assert_eq!(pad_base64("YWJjZGU"), "YWJjZGU=");
+    }
 }

@@ -1,0 +1,223 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g., v1.0.0)'
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # First, ensure all tests pass
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run tests
+        run: cargo test --all --verbose
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  # Build binaries for all platforms
+  build:
+    name: Build ${{ matrix.target }}
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: mihomo-cli
+            asset_name: mihomo-cli-linux-x86_64
+
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact_name: mihomo-cli
+            asset_name: mihomo-cli-linux-x86_64-musl
+
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: mihomo-cli
+            asset_name: mihomo-cli-macos-x86_64
+
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: mihomo-cli
+            asset_name: mihomo-cli-macos-arm64
+
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: mihomo-cli.exe
+            asset_name: mihomo-cli-windows-x86_64.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl-tools (Linux musl only)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Strip binary (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        run: strip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+
+      - name: Create archive
+        shell: bash
+        run: |
+          mkdir -p release
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} release/
+            cd release
+            7z a ${{ matrix.asset_name }}.zip ${{ matrix.artifact_name }}
+            certutil -hashfile ${{ matrix.asset_name }}.zip SHA256 > ${{ matrix.asset_name }}.zip.sha256
+          else
+            cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} release/${{ matrix.asset_name }}
+            cd release
+            tar czf ${{ matrix.asset_name }}.tar.gz ${{ matrix.asset_name }}
+            shasum -a 256 ${{ matrix.asset_name }}.tar.gz > ${{ matrix.asset_name }}.tar.gz.sha256
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: release/*
+
+  # Create GitHub Release and upload all binaries
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Consolidate artifacts
+        run: |
+          mkdir -p release
+          find artifacts -type f -exec cp {} release/ \;
+          ls -lah release/
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate release notes
+        id: notes
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.tag }}"
+          echo "Generating release notes for ${VERSION}"
+
+          # Get the previous tag
+          PREV_TAG=$(git describe --abbrev=0 --tags ${VERSION}^ 2>/dev/null || echo "")
+
+          if [ -z "$PREV_TAG" ]; then
+            CHANGES=$(git log --pretty=format:"- %s (%h)" ${VERSION})
+          else
+            CHANGES=$(git log --pretty=format:"- %s (%h)" ${PREV_TAG}..${VERSION})
+          fi
+
+          cat > release_notes.md <<EOF
+          # Release $VERSION
+
+          ## Changes
+
+          $CHANGES
+
+          ## Installation
+
+          Download the appropriate binary for your platform below.
+
+          ### Linux
+          \`\`\`bash
+          # x86_64 (glibc)
+          wget https://github.com/\${{ github.repository }}/releases/download/${VERSION}/mihomo-cli-linux-x86_64.tar.gz
+          tar xzf mihomo-cli-linux-x86_64.tar.gz
+          chmod +x mihomo-cli-linux-x86_64
+          sudo mv mihomo-cli-linux-x86_64 /usr/local/bin/mihomo-cli
+
+          # x86_64 (musl - static binary)
+          wget https://github.com/\${{ github.repository }}/releases/download/${VERSION}/mihomo-cli-linux-x86_64-musl.tar.gz
+          tar xzf mihomo-cli-linux-x86_64-musl.tar.gz
+          chmod +x mihomo-cli-linux-x86_64-musl
+          sudo mv mihomo-cli-linux-x86_64-musl /usr/local/bin/mihomo-cli
+          \`\`\`
+
+          ### macOS
+          \`\`\`bash
+          # Intel (x86_64)
+          wget https://github.com/\${{ github.repository }}/releases/download/${VERSION}/mihomo-cli-macos-x86_64.tar.gz
+          tar xzf mihomo-cli-macos-x86_64.tar.gz
+          chmod +x mihomo-cli-macos-x86_64
+          sudo mv mihomo-cli-macos-x86_64 /usr/local/bin/mihomo-cli
+
+          # Apple Silicon (ARM64)
+          wget https://github.com/\${{ github.repository }}/releases/download/${VERSION}/mihomo-cli-macos-arm64.tar.gz
+          tar xzf mihomo-cli-macos-arm64.tar.gz
+          chmod +x mihomo-cli-macos-arm64
+          sudo mv mihomo-cli-macos-arm64 /usr/local/bin/mihomo-cli
+          \`\`\`
+
+          ### Windows
+          Download \`mihomo-cli-windows-x86_64.exe.zip\`, extract, and run.
+
+          ## Checksums
+
+          SHA256 checksums are provided for all binaries. Verify with:
+          \`\`\`bash
+          sha256sum -c mihomo-cli-*.sha256
+          \`\`\`
+          EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Release ${{ steps.version.outputs.tag }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+          files: |
+            release/*.tar.gz
+            release/*.zip
+            release/*.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

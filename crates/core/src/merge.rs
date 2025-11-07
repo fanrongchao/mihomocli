@@ -316,4 +316,116 @@ mod tests {
             Some("store")
         );
     }
+
+    #[test]
+    fn test_merge_empty_configs() {
+        let template = ClashConfig::default();
+        let merged = merge_configs(template, vec![]);
+        assert_eq!(merged.proxies.len(), 0);
+        assert_eq!(merged.rules.len(), 0);
+    }
+
+    #[test]
+    fn test_merge_multiple_subscriptions() {
+        let template = ClashConfig::default();
+
+        let mut sub1 = ClashConfig::default();
+        sub1.proxies.push(proxy("A"));
+        sub1.rules.push("RULE,A".to_string());
+
+        let mut sub2 = ClashConfig::default();
+        sub2.proxies.push(proxy("B"));
+        sub2.rules.push("RULE,B".to_string());
+
+        let merged = merge_configs(template, vec![sub1, sub2]);
+        assert_eq!(merged.proxies.len(), 2);
+        assert_eq!(merged.rules.len(), 2);
+        assert_eq!(merged.proxy_names(), vec!["A", "B"]);
+    }
+
+    #[test]
+    fn test_populate_default_selector_with_empty_proxies() {
+        let mut template = ClashConfig::default();
+        template
+            .proxy_groups
+            .push(selector_group(DEFAULT_SELECTOR_NAME, &[]));
+
+        let merged = merge_configs(template, vec![]);
+        // Should still create the group, but with empty proxies
+        assert_eq!(merged.proxy_groups.len(), 1);
+    }
+
+    #[test]
+    fn test_apply_base_config_mixed_port() {
+        let mut base = ClashConfig::default();
+        base.extra
+            .insert("mixed-port".into(), Value::from(7890));
+
+        let mut merged = ClashConfig::default();
+        merged.port = Some(8080);
+        merged.socks_port = Some(8081);
+
+        let result = apply_base_config(merged, &base);
+        // Legacy ports should be cleared when mixed-port is present
+        assert_eq!(result.port, None);
+        assert_eq!(result.socks_port, None);
+        assert_eq!(
+            result.extra.get("mixed-port").and_then(Value::as_u64),
+            Some(7890)
+        );
+    }
+
+    #[test]
+    fn test_merge_duplicate_proxy_names() {
+        let mut template = ClashConfig::default();
+        template.proxies.push(proxy("A"));
+
+        let mut sub = ClashConfig::default();
+        sub.proxies.push(proxy("A")); // Duplicate name
+
+        let merged = merge_configs(template, vec![sub]);
+        // Both proxies should be present (dedup is only for group filling)
+        assert_eq!(merged.proxies.len(), 2);
+        // But proxy_names should still list both
+        assert_eq!(merged.proxy_names().len(), 2);
+    }
+
+    #[test]
+    fn test_extra_fields_merge() {
+        let mut template = ClashConfig::default();
+        template
+            .extra
+            .insert("template-key".into(), Value::from("template-value"));
+
+        let mut sub = ClashConfig::default();
+        sub.extra
+            .insert("sub-key".into(), Value::from("sub-value"));
+        sub.extra
+            .insert("template-key".into(), Value::from("sub-value-override"));
+
+        let merged = merge_configs(template, vec![sub]);
+        // Template value should win (or_insert semantics)
+        assert_eq!(
+            merged.extra.get("template-key").and_then(Value::as_str),
+            Some("template-value")
+        );
+        // Sub's unique key should be present
+        assert_eq!(
+            merged.extra.get("sub-key").and_then(Value::as_str),
+            Some("sub-value")
+        );
+    }
+
+    #[test]
+    fn test_apply_base_config_preserves_proxies() {
+        let base = ClashConfig::default();
+
+        let mut merged = ClashConfig::default();
+        merged.proxies.push(proxy("A"));
+        merged.proxies.push(proxy("B"));
+
+        let result = apply_base_config(merged, &base);
+        // Proxies should be preserved
+        assert_eq!(result.proxies.len(), 2);
+    }
 }
