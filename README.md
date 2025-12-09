@@ -12,6 +12,12 @@
 - Manage quick custom domain->proxy rules (`manage custom add/list/remove`)
 
 ## Quick Start
+Tip: For a reproducible toolchain, run commands inside the Nix dev shell first:
+
+```
+nix develop
+```
+
 ```bash
 # Build
 # Recommended: enter flake dev environment, then build
