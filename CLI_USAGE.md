@@ -35,7 +35,7 @@ Key flags:
 - `--output <PATH>`: Destination for merged config. Defaults to `~/.config/mihomocli/output/config.yaml`.
 - `--stdout`: Print merged YAML to stdout instead of writing to disk.
 - `--no-dev-rules`: Disable the default proxy-rule injection for common developer registries (GitHub/GitLab, Go module proxies, npm/yarn/pnpm, PyPI, crates.io, Kubernetes/k3s registries, Docker/GCR, cache.nixos.org, mainstream AI agent APIs like OpenAI/Anthropic/Gemini/Cursor/OpenCode, etc.).
-- `--dev-rules-via <NAME>`: Proxy/group tag used by the generated dev rules (default: `Proxy`).
+- `--dev-rules-via <NAME>`: Proxy/group tag used by the generated dev rules (default: `Proxy`). If the default `Proxy` is not present, the CLI auto-falls back to a present group (preferring `🚀 节点选择`), then the first group, then the first proxy, and finally `DIRECT`.
 - `--dev-rules-show`: Print the generated dev rule list (even without applying it).
 - `--subscription-ua <STRING>`: HTTP User-Agent used when fetching subscriptions. Default: `clash-verge/v2.4.2`.
 - `--subscription-allow-base64`: Enable decoding base64/share-link lists (trojan/vmess/ss). Disabled by default to prefer provider-native Clash YAML.
@@ -49,6 +49,19 @@ Runtime directories (auto-created):
 - Cache: `~/.cache/mihomocli/subscriptions/`
 - Output: `~/.config/mihomocli/output/config.yaml`
 - Resources (Country.mmdb, geoip.dat, geosite.dat): `~/.config/mihomocli/resources/` (use `mihomo -d ~/.config/mihomocli/resources ...`)
+
+## Validate with mihomo
+
+You can validate the generated config with the real mihomo binary:
+
+```
+mihomo-cli test \
+  --mihomo-bin mihomo \
+  --mihomo-dir ~/.config/mihomocli \
+  --config ~/.config/mihomocli/output/config.yaml
+```
+
+By default, `mihomo-cli test` uses `mihomo` from `PATH`, `~/.config/mihomocli` as `-d`, and the default output config path.
 
 The CLI accepts Clash YAML subscriptions directly, but it can also decode common
 link-based feeds (trojan/vmess/shadowsocks) even when they are delivered via

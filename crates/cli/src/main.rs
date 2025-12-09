@@ -85,6 +85,10 @@ Notes:
     /// Show or manage cached state and quick rules
     #[command(subcommand)]
     Manage(Manage),
+
+    /// Run mihomo to test the generated config (-t)
+    #[command(about = "Validate output config with mihomo -t")]
+    Test(TestArgs),
 }
 
 // Note: default clap styles are used to avoid introducing extra dependencies
@@ -152,6 +156,7 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Merge(args) => run_merge(args).await?,
         Commands::Manage(cmd) => run_manage(cmd).await?,
+        Commands::Test(args) => run_test(args).await?,
     }
 
     Ok(())
@@ -288,7 +293,20 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
 
     let mut dev_rules_listing = None;
     if args.dev_rules || args.dev_rules_show {
-        let list = build_dev_rules(&args.dev_rules_via);
+        let resolved_via = resolve_dev_rules_via(
+            &args.dev_rules_via,
+            DEFAULT_DEV_RULE_VIA,
+            &merged,
+        );
+        if resolved_via != args.dev_rules_via && args.dev_rules {
+            warn!(
+                requested = %args.dev_rules_via,
+                using = %resolved_via,
+                "--dev-rules-via not found in config; using fallback"
+            );
+        }
+
+        let list = build_dev_rules(&resolved_via);
         if args.dev_rules {
             let mut combined = list.clone();
             combined.extend(merged.rules.into_iter());
@@ -380,6 +398,36 @@ fn resolve_base_path(paths: &AppPaths, provided: &Path) -> PathBuf {
 }
 
 const DEFAULT_DEV_RULE_VIA: &str = "Proxy";
+
+fn resolve_dev_rules_via(via: &str, default_via: &str, cfg: &mihomo_core::ClashConfig) -> String {
+    // If the requested via exists as a group or proxy, use it as-is.
+    let group_names = cfg.proxy_group_names();
+    let proxy_names = cfg.proxy_names();
+    if group_names.iter().any(|n| n == via) || proxy_names.iter().any(|n| n == via) {
+        return via.to_string();
+    }
+
+    // If the user explicitly set a via different from our default, respect it even if missing.
+    // This preserves explicit intent; mihomo will surface the error if it's invalid.
+    if via != default_via {
+        return via.to_string();
+    }
+
+    // Prefer common selector name if present.
+    let common = "🚀 节点选择";
+    if group_names.iter().any(|n| n == common) {
+        return common.to_string();
+    }
+
+    // Otherwise pick the first available group, then first proxy, else last-resort DIRECT.
+    if let Some(first_group) = group_names.first() {
+        return first_group.clone();
+    }
+    if let Some(first_proxy) = proxy_names.first() {
+        return first_proxy.clone();
+    }
+    "DIRECT".to_string()
+}
 
 fn build_dev_rules(via: &str) -> Vec<String> {
     // Common developer ecosystems that frequently require proxy access when fetching
@@ -530,6 +578,53 @@ async fn ensure_default_template(paths: &AppPaths) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[derive(Args)]
+struct TestArgs {
+    /// Path to mihomo binary (defaults to `mihomo` in PATH)
+    #[arg(long = "mihomo-bin", default_value = "mihomo")]
+    mihomo_bin: String,
+
+    /// Config file to test (defaults to ~/.config/mihomocli/output/config.yaml)
+    #[arg(long)]
+    config: Option<PathBuf>,
+
+    /// Working directory passed to mihomo via -d (defaults to ~/.config/mihomocli)
+    #[arg(long = "mihomo-dir")]
+    mihomo_dir: Option<PathBuf>,
+}
+
+async fn run_test(args: TestArgs) -> anyhow::Result<()> {
+    use tokio::process::Command;
+
+    let paths = AppPaths::new()?;
+    let config_path = args
+        .config
+        .unwrap_or_else(|| paths.output_config_path());
+    let workdir = args
+        .mihomo_dir
+        .unwrap_or_else(|| paths.config_dir().to_path_buf());
+
+    let status = Command::new(&args.mihomo_bin)
+        .arg("-d")
+        .arg(workdir)
+        .arg("-f")
+        .arg(&config_path)
+        .arg("-m")
+        .arg("-t")
+        .status()
+        .await?;
+
+    if status.success() {
+        println!("mihomo config test passed: {}", config_path.display());
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "mihomo config test failed (exit code: {:?})",
+            status.code()
+        ))
+    }
 }
 
 fn subscription_from_input(index: usize, input: &str) -> Subscription {

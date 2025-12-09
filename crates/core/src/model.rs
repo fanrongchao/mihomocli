@@ -59,4 +59,17 @@ impl ClashConfig {
             })
             .collect()
     }
+
+    pub fn proxy_group_names(&self) -> Vec<String> {
+        self.proxy_groups
+            .iter()
+            .filter_map(|group| match group {
+                Value::Mapping(map) => map
+                    .get(&Value::from("name"))
+                    .and_then(|value| value.as_str())
+                    .map(|s| s.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
 }

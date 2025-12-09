@@ -31,6 +31,10 @@ output.
   - `cargo fmt`
   - `cargo clippy --all-targets --all-features`
 
+- Validate mihomo config with real binary:
+  - `cargo run -p mihomo-cli -- test` (wraps `mihomo -t` with `-d ~/.config/mihomocli -f ~/.config/mihomocli/output/config.yaml -m`)
+  - You may override paths via `--mihomo-dir` and `--config`.
+
 ## Coding Style & Naming Conventions
 Stick to Rust 2021 idioms with 4-space indentation and `snake_case` for modules, functions, and fields. Prefer descriptive struct names (`Subscription`, `FileDeployer`). Use `rustfmt` defaults; never hand-edit generated formatting. Keep public APIs documented with `///` comments when behaviour is non-trivial. Log actionable events through `tracing` with structured fields.
 
@@ -44,6 +48,8 @@ Adopt Conventional Commits (`feat:`, `fix:`, `refactor:`, `chore:`) to describe 
 Ensure code auto-creates paths such as `~/.config/mihomocli/templates/` and `~/.config/mihomocli/output/config.yaml`. The CLI ships with `cvr_template.yaml` embedded and writes it into the templates directory on first run—keep that behaviour intact when refactoring. Never commit user-specific credentials or cached subscription files. Document any new environment variables or feature flags in `SPEC.md` or an adjacent README update.
 
 When adding merge-time conveniences, prefer CLI flags. The existing dev-rule feature is enabled by default and prepends proxy rules for popular developer registries (Git/GitLab, Go proxy mirrors, npm/yarn, PyPI, crates.io, Kubernetes/k3s mirrors, Docker/GCR, cache.nixos.org, etc.); allow users to opt out via `--no-dev-rules`, adjust targets with `--dev-rules-via`, and print the defaults with `--dev-rules-show`.
+
+Dev-rules via fallback: if the requested group `Proxy` does not exist in the merged output, the CLI selects an existing route target automatically (preferring `🚀 节点选择`, otherwise the first group, first proxy, then `DIRECT`). A warning is logged when fallback is used.
 
 ## Cache & Quick Rules (CLI)
 - Cached last subscription URL: `mihomo-cli manage cache show|clear`. Reuse it explicitly via `--use-last` when calling `merge` without `-s`.

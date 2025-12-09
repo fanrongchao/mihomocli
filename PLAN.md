@@ -1,5 +1,10 @@
 # Roadmap / TODOs (next iterations)
 
+## Recently Completed
+
+- Added `mihomo-cli test` subcommand to validate output config with real `mihomo -t`.
+- Implemented dev-rules via fallback when `Proxy` group is missing (prefer `🚀 节点选择`, else first group/proxy, else `DIRECT`).
+
 This document tracks concrete improvements to pick up next time. Items are ordered for incremental delivery, each with clear goals, tasks, and acceptance criteria.
 
 ## 1) CLI Runtime Options (mimic CVR)
