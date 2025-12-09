@@ -161,6 +161,27 @@ template_example: |
   rules:
     - MATCH,🚀 节点选择
 
+cli_overrides_external_controller: |
+  # 通过 CLI 覆盖 external-controller 主机/端口与 secret：
+  # 优先级：CLI 标志 > base-config > 模板 > 订阅
+  #
+  # 示例：
+  #   mihomo-cli merge \
+  #     --template examples/cvr_template.yaml \
+  #     -s examples/subscription.yaml \
+  #     --external-controller-url 0.0.0.0 \
+  #     --external-controller-port 19090 \
+  #     --external-controller-secret testsecret
+  #
+  # 效果：输出配置包含
+  #   external-controller: 0.0.0.0:19090
+  #   secret: testsecret
+  #
+  # 如果仅提供其中之一：
+  # - 仅提供端口时，主机名沿用已存在配置（模板/base-config 中的 external-controller），默认为 127.0.0.1；
+  # - 仅提供主机时，端口沿用已存在配置，默认 9090；
+  # - 仅提供 secret 时，仅更新 secret 字段。
+
 # 5.3 Clash/Mihomo 配置模型（简化版）
 rust_struct_clash_config: |
   use serde::{Serialize, Deserialize};

@@ -33,6 +33,12 @@ This document tracks concrete improvements to pick up next time. Items are order
   - Base-config is still applied for other runtime fields when provided.
   - Formatting and tests pass in flake env.
 
+### Status (Dec 2025)
+- Completed: external-controller scoped flags implemented and documented
+  - `--external-controller-url`, `--external-controller-port`, `--external-controller-secret`
+  - Precedence: CLI > base-config > template (implemented post base-config application)
+  - Verified with real `mihomo -t` via `mihomo-cli test` using `examples/cvr_template.yaml`
+
 - Nice‑to‑have (phase 2)
   - `--runtime-overlay path.yaml` to merge a YAML snippet into `extra` (documented merge strategy: deep merge, CLI wins).
 

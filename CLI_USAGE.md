@@ -48,6 +48,9 @@ Key flags:
 - `--subscription-ua <STRING>`: HTTP User-Agent used when fetching subscriptions. Default: `clash-verge/v2.4.2`.
 - `--subscription-allow-base64`: Enable decoding base64/share-link lists (trojan/vmess/ss). Disabled by default to prefer provider-native Clash YAML.
 - `--use-last`: Reuse the cached last subscription URL when no `-s/--subscription` is provided.
+ - `--external-controller-url <HOST>`: Host/IP for the external controller (e.g., `0.0.0.0`).
+ - `--external-controller-port <PORT>`: Port for the external controller (e.g., `9090`).
+ - `--external-controller-secret <SECRET>`: Secret for the external controller API.
 
 ## Configuration Files
 

@@ -95,6 +95,7 @@ mihomo-cli test \
 - `--subscription-allow-base64`: Enable decoding base64/share-link subscriptions (trojan/vmess/ss). Disabled by default to prefer native Clash YAML from providers.
 - `--no-dev-rules [--dev-rules-via <NAME>]`: Dev rules are enabled by default and prepend proxy rules for common developer registries (GitHub/GitLab, Go proxy mirrors, npm/yarn/pnpm, PyPI, crates.io, Kubernetes/k3s registries, Docker/GCR, cache.nixos.org, AI agent APIs such as OpenAI/Claude/Gemini/Cursor/OpenCode, etc.). Override the target group with `--dev-rules-via` or disable via `--no-dev-rules`. If the requested group `Proxy` is not present in the merged config, the CLI falls back to an existing group (preferring `🚀 节点选择`), otherwise the first group, then the first proxy, and finally `DIRECT`.
 - `--dev-rules-show`: Print the generated dev rule list (useful for inspection without modifying output).
+- External controller settings: `--external-controller-url <HOST>`, `--external-controller-port <PORT>`, and `--external-controller-secret <SECRET>` to set `external-controller` and `secret` in the merged output.
 
 ## Cache and Quick Rules
 

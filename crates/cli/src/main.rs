@@ -145,6 +145,18 @@ struct MergeArgs {
     /// Disabled by default to prefer native Clash YAML from providers.
     #[arg(long = "subscription-allow-base64", default_value_t = false)]
     subscription_allow_base64: bool,
+
+    /// Host/IP for external-controller (e.g., 0.0.0.0)
+    #[arg(long = "external-controller-url")]
+    external_controller_url: Option<String>,
+
+    /// Port for external-controller (e.g., 9090)
+    #[arg(long = "external-controller-port")]
+    external_controller_port: Option<u16>,
+
+    /// Secret used by external controller API
+    #[arg(long = "external-controller-secret")]
+    external_controller_secret: Option<String>,
 }
 
 #[tokio::main]
@@ -293,11 +305,8 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
 
     let mut dev_rules_listing = None;
     if args.dev_rules || args.dev_rules_show {
-        let resolved_via = resolve_dev_rules_via(
-            &args.dev_rules_via,
-            DEFAULT_DEV_RULE_VIA,
-            &merged,
-        );
+        let resolved_via =
+            resolve_dev_rules_via(&args.dev_rules_via, DEFAULT_DEV_RULE_VIA, &merged);
         if resolved_via != args.dev_rules_via && args.dev_rules {
             warn!(
                 requested = %args.dev_rules_via,
@@ -329,6 +338,43 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
         let mut new_rules = quick;
         new_rules.extend(merged.rules.into_iter());
         merged.rules = new_rules;
+    }
+
+    // Apply external-controller overrides if provided
+    if args.external_controller_url.is_some()
+        || args.external_controller_port.is_some()
+        || args.external_controller_secret.is_some()
+    {
+        use serde_yaml::Value;
+
+        // Read any existing external-controller value like "host:port"
+        let mut existing_host: Option<String> = None;
+        let mut existing_port: Option<u16> = None;
+        if let Some(Value::String(s)) = merged.extra.get("external-controller") {
+            if let Some((h, p)) = parse_host_port(s) {
+                existing_host = Some(h);
+                existing_port = Some(p);
+            }
+        }
+
+        let host = args
+            .external_controller_url
+            .clone()
+            .or(existing_host)
+            .unwrap_or_else(|| "127.0.0.1".to_string());
+        let port = args
+            .external_controller_port
+            .or(existing_port)
+            .unwrap_or(9090);
+        merged
+            .extra
+            .insert("external-controller".to_string(), Value::String(format!("{}:{}", host, port)));
+
+        if let Some(secret) = args.external_controller_secret.as_ref() {
+            merged
+                .extra
+                .insert("secret".to_string(), Value::String(secret.clone()));
+        }
     }
 
     let yaml = merged.to_yaml_string()?;
@@ -543,7 +589,10 @@ mod tests {
             "DOMAIN,cache.nixos.org,",
             "DOMAIN-SUFFIX,dl.k8s.io,",
         ] {
-            assert!(rules.iter().any(|rule| rule.starts_with(prefix)), "missing {prefix}");
+            assert!(
+                rules.iter().any(|rule| rule.starts_with(prefix)),
+                "missing {prefix}"
+            );
         }
     }
 }
@@ -599,9 +648,7 @@ async fn run_test(args: TestArgs) -> anyhow::Result<()> {
     use tokio::process::Command;
 
     let paths = AppPaths::new()?;
-    let config_path = args
-        .config
-        .unwrap_or_else(|| paths.output_config_path());
+    let config_path = args.config.unwrap_or_else(|| paths.output_config_path());
     let workdir = args
         .mihomo_dir
         .unwrap_or_else(|| paths.config_dir().to_path_buf());
@@ -654,6 +701,32 @@ fn subscription_from_input(index: usize, input: &str) -> Subscription {
 
     subscription.ensure_id();
     subscription
+}
+
+/// Parse host:port from a string. Supports "host:port" and "[IPv6]:port".
+fn parse_host_port(s: &str) -> Option<(String, u16)> {
+    // Bracketed IPv6 like [::1]:9090
+    if let Some(close_idx) = s.rfind(']') {
+        let open_idx = s.find('[')?;
+        if close_idx < s.len().saturating_sub(2) && s.as_bytes().get(close_idx + 1) == Some(&b':') {
+            let host = s.get(open_idx + 1..close_idx)?.to_string();
+            let port_str = s.get(close_idx + 2..)?;
+            if let Ok(port) = port_str.parse::<u16>() {
+                return Some((host, port));
+            }
+        }
+        return None;
+    }
+
+    // Fallback: split by last ':'
+    if let Some(idx) = s.rfind(':') {
+        let (host, port_str) = s.split_at(idx);
+        let port_str = &port_str[1..];
+        if let Ok(port) = port_str.parse::<u16>() {
+            return Some((host.to_string(), port));
+        }
+    }
+    None
 }
 
 fn is_url(input: &str) -> bool {
