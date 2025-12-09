@@ -10,6 +10,14 @@ cargo build -p mihomo-cli
 
 The binary will be at `target/debug/mihomo-cli`.
 
+Tip (Nix dev shell): for a reproducible toolchain with `cargo`, `rustfmt`, and `clippy`, run commands inside the flake dev shell:
+
+```bash
+nix develop -c cargo build -p mihomo-cli
+nix develop -c cargo fmt
+nix develop -c cargo clippy --all-targets --all-features
+```
+
 ## Command Overview
 
 Get top-level help and per-command details directly from the binary:
