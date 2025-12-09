@@ -19,6 +19,11 @@ nix develop
 ```
 
 ```bash
+# Initialize runtime directories and seed default template
+mihomo-cli init
+```
+
+```bash
 # Build
 # Recommended: enter flake dev environment, then build
 nix develop -c cargo build -p mihomo-cli
@@ -88,6 +93,43 @@ mihomo-cli test \
   --mihomo-dir ~/.config/mihomocli \
   --config ~/.config/mihomocli/output/config.yaml
 ```
+
+## Server Bootstrap (first run)
+
+When running on servers with slow access to GitHub, you can avoid first-run stalls by pre-creating directories and preloading resources.
+
+```bash
+# 1) Create directories and seed template (no network fetch)
+mihomo-cli init
+
+# 2) Manually preload resources (optional if your server can reach GitHub)
+mkdir -p ~/.config/mihomocli/resources
+
+# Country.mmdb
+curl -L -o ~/.config/mihomocli/resources/Country.mmdb \
+  https://ghproxy.com/https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/country.mmdb
+
+# geoip.dat
+curl -L -o ~/.config/mihomocli/resources/geoip.dat \
+  https://ghproxy.com/https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat
+
+# geosite.dat
+curl -L -o ~/.config/mihomocli/resources/geosite.dat \
+  https://ghproxy.com/https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat
+```
+
+Notes:
+- If `~/.config/mihomocli/resources/{Country.mmdb,geoip.dat,geosite.dat}` already exist, the CLI skips downloading them during `merge`.
+- Resource URLs (built-in defaults):
+  - Country.mmdb: `https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/country.mmdb`
+  - geoip.dat: `https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat`
+  - geosite.dat: `https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat`
+- Alternative mirrors (prepend a proxy to the same URLs):
+  - `https://ghproxy.com/` or `https://mirror.ghproxy.com/` or `https://github.moeyy.xyz/`
+- Alternative data sources (compatible format):
+  - Country.mmdb: `https://github.com/P3TERX/GeoLite.mmdb/releases/latest/download/Country.mmdb`
+  - geoip/geosite: `https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/{geoip.dat|geosite.dat}`
+
 
 ## CLI Flags of Interest
 

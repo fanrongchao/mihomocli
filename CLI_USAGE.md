@@ -25,6 +25,7 @@ Get top-level help and per-command details directly from the binary:
 ```bash
 mihomo-cli --help
 mihomo-cli merge --help
+mihomo-cli init --help
 ```
 
 ### `merge`
@@ -52,6 +53,19 @@ Key flags:
  - `--external-controller-port <PORT>`: Port for the external controller (e.g., `9090`).
  - `--external-controller-secret <SECRET>`: Secret for the external controller API.
 
+### `init`
+
+Create runtime directories under `~/.config/mihomocli` and seed the bundled CVR‑aligned template if missing.
+
+```
+mihomo-cli init
+```
+
+What it does:
+- Ensures: `~/.config/mihomocli/`, `templates/`, `resources/`, `output/`, and cache dirs exist
+- Seeds: `~/.config/mihomocli/templates/cvr_template.yaml` if not present
+- Does not download resources to avoid first-run network stalls
+
 ## Configuration Files
 
 Runtime directories (auto-created):
@@ -60,6 +74,27 @@ Runtime directories (auto-created):
 - Cache: `~/.cache/mihomocli/subscriptions/`
 - Output: `~/.config/mihomocli/output/config.yaml`
 - Resources (Country.mmdb, geoip.dat, geosite.dat): `~/.config/mihomocli/resources/` (use `mihomo -d ~/.config/mihomocli/resources ...`)
+
+### Resource mirrors and manual preload
+
+If your environment has trouble reaching GitHub, you can preload the three resource files and the CLI will skip downloading them:
+
+```bash
+mkdir -p ~/.config/mihomocli/resources
+curl -L -o ~/.config/mihomocli/resources/Country.mmdb \
+  https://ghproxy.com/https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/country.mmdb
+curl -L -o ~/.config/mihomocli/resources/geoip.dat \
+  https://ghproxy.com/https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat
+curl -L -o ~/.config/mihomocli/resources/geosite.dat \
+  https://ghproxy.com/https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat
+```
+
+Built-in sources:
+- Country.mmdb: `https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/country.mmdb`
+- geoip.dat: `https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat`
+- geosite.dat: `https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat`
+
+Mirrors (prefix any of the above): `https://ghproxy.com/`, `https://mirror.ghproxy.com/`, `https://github.moeyy.xyz/`
 
 ## Validate with mihomo
 

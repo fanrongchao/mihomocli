@@ -89,6 +89,10 @@ Notes:
     /// Run mihomo to test the generated config (-t)
     #[command(about = "Validate output config with mihomo -t")]
     Test(TestArgs),
+
+    /// Initialize config directories and default template
+    #[command(about = "Create ~/.config/mihomocli structure and seed template")]
+    Init,
 }
 
 // Note: default clap styles are used to avoid introducing extra dependencies
@@ -169,7 +173,31 @@ async fn main() -> anyhow::Result<()> {
         Commands::Merge(args) => run_merge(args).await?,
         Commands::Manage(cmd) => run_manage(cmd).await?,
         Commands::Test(args) => run_test(args).await?,
+        Commands::Init => run_init().await?,
     }
+
+    Ok(())
+}
+
+async fn run_init() -> anyhow::Result<()> {
+    let paths = AppPaths::new()?;
+    // Create runtime directories (config, templates, resources, output, cache)
+    paths.ensure_runtime_dirs().await?;
+    // Install bundled default template if missing
+    ensure_default_template(&paths).await?;
+
+    println!(
+        "Initialized at: {}\n  - templates: {}\n  - resources: {}\n  - output: {}\n  - cache: {}",
+        paths.config_dir().display(),
+        paths.templates_dir().display(),
+        paths.resources_dir().display(),
+        paths
+            .output_config_path()
+            .parent()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<unknown>".into()),
+        paths.cache_dir().display()
+    );
 
     Ok(())
 }
