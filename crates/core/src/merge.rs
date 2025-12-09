@@ -358,8 +358,7 @@ mod tests {
     #[test]
     fn test_apply_base_config_mixed_port() {
         let mut base = ClashConfig::default();
-        base.extra
-            .insert("mixed-port".into(), Value::from(7890));
+        base.extra.insert("mixed-port".into(), Value::from(7890));
 
         let mut merged = ClashConfig::default();
         merged.port = Some(8080);
@@ -398,8 +397,7 @@ mod tests {
             .insert("template-key".into(), Value::from("template-value"));
 
         let mut sub = ClashConfig::default();
-        sub.extra
-            .insert("sub-key".into(), Value::from("sub-value"));
+        sub.extra.insert("sub-key".into(), Value::from("sub-value"));
         sub.extra
             .insert("template-key".into(), Value::from("sub-value-override"));
 

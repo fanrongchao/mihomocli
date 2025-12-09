@@ -560,7 +560,12 @@ rules:
     fn parse_empty_and_whitespace_input() {
         // Empty string is actually valid YAML (empty document), so it may parse successfully
         // Let's test what actually happens
-        let result = parse_subscription_payload_with_options("", ParseOptions { allow_base64: false });
+        let result = parse_subscription_payload_with_options(
+            "",
+            ParseOptions {
+                allow_base64: false,
+            },
+        );
         if let Ok(config) = result {
             // If it parses, it should have empty proxies
             assert_eq!(config.proxies.len(), 0);
@@ -570,7 +575,12 @@ rules:
         }
 
         // Whitespace-only should behave similarly
-        let result2 = parse_subscription_payload_with_options("   \n\n  ", ParseOptions { allow_base64: false });
+        let result2 = parse_subscription_payload_with_options(
+            "   \n\n  ",
+            ParseOptions {
+                allow_base64: false,
+            },
+        );
         if let Ok(config2) = result2 {
             assert_eq!(config2.proxies.len(), 0);
         }
@@ -593,7 +603,9 @@ rules:
         assert!(is_mostly_printable("trojan://test@example.com:443"));
         // String with more than 8 control characters (excluding newline, \r, \t)
         // \x09 is tab (allowed), so we need more control chars
-        assert!(!is_mostly_printable("\x01\x02\x03\x04\x05\x06\x07\x08\x0b\x0c\x0d\x0e\x0f"));
+        assert!(!is_mostly_printable(
+            "\x01\x02\x03\x04\x05\x06\x07\x08\x0b\x0c\x0d\x0e\x0f"
+        ));
         // Mostly control characters should fail
         assert!(!is_mostly_printable("\x01\x02\x03\x04\x05\x06\x07\x08\x0b"));
     }
