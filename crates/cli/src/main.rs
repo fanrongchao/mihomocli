@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context};
 use clap::{Args, Parser, Subcommand};
@@ -473,9 +473,10 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
             .external_controller_port
             .or(existing_port)
             .unwrap_or(9090);
-        merged
-            .extra
-            .insert("external-controller".to_string(), Value::String(format!("{}:{}", host, port)));
+        merged.extra.insert(
+            "external-controller".to_string(),
+            Value::String(format!("{}:{}", host, port)),
+        );
 
         if let Some(secret) = args.external_controller_secret.as_ref() {
             merged
@@ -581,6 +582,47 @@ fn resolve_dev_rules_via(via: &str, default_via: &str, cfg: &mihomo_core::ClashC
     }
     "DIRECT".to_string()
 }
+
+// Built-in developer/AI endpoints considered proxy-worthy.
+// Tuple format: (rule kind, target)
+// - Use DOMAIN for exact host matches
+// - Use DOMAIN-SUFFIX for suffix matches
+const DEV_RULE_TARGETS: &[(&str, &str)] = &[
+    // Git & code hosting
+    ("DOMAIN-SUFFIX", "github.com"),
+    ("DOMAIN-SUFFIX", "githubusercontent.com"),
+    ("DOMAIN-SUFFIX", "gitlab.com"),
+    ("DOMAIN-SUFFIX", "bitbucket.org"),
+    // Language ecosystems / registries
+    ("DOMAIN-SUFFIX", "registry.npmjs.org"),
+    ("DOMAIN-SUFFIX", "nodejs.org"),
+    ("DOMAIN-SUFFIX", "pypi.org"),
+    ("DOMAIN-SUFFIX", "files.pythonhosted.org"),
+    ("DOMAIN-SUFFIX", "crates.io"),
+    ("DOMAIN-SUFFIX", "static.crates.io"),
+    ("DOMAIN-SUFFIX", "rubygems.org"),
+    ("DOMAIN-SUFFIX", "golang.org"),
+    ("DOMAIN-SUFFIX", "go.dev"),
+    ("DOMAIN-SUFFIX", "golang.google.cn"),
+    ("DOMAIN-SUFFIX", "rust-lang.org"),
+    // Kubernetes / cloud tooling
+    ("DOMAIN-SUFFIX", "k8s.io"),
+    ("DOMAIN-SUFFIX", "dl.k8s.io"),
+    ("DOMAIN-SUFFIX", "k3s.io"),
+    // Containers / registries
+    ("DOMAIN-SUFFIX", "docker.com"),
+    ("DOMAIN-SUFFIX", "docker.io"),
+    ("DOMAIN-SUFFIX", "registry-1.docker.io"),
+    ("DOMAIN-SUFFIX", "ghcr.io"),
+    ("DOMAIN-SUFFIX", "gcr.io"),
+    ("DOMAIN-SUFFIX", "pkg.dev"),
+    ("DOMAIN-SUFFIX", "quay.io"),
+    // Nix infra
+    ("DOMAIN", "cache.nixos.org"),
+    // AI APIs
+    ("DOMAIN-SUFFIX", "api.openai.com"),
+    ("DOMAIN-SUFFIX", "claude.ai"),
+];
 
 fn build_dev_rules(via: &str) -> Vec<String> {
     DEV_RULE_TARGETS
