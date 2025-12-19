@@ -449,8 +449,14 @@ custom_rules_cli: |
   # CLI 管理命令
   mihomo-cli manage cache show|clear
   mihomo-cli manage custom add --domain <dom> --via <proxy_or_group> [--kind domain|suffix|keyword]
+  # 或者添加直连规则（DIRECT）
+  mihomo-cli manage custom add --domain <dom> [--kind domain|suffix|keyword] --via direct
   mihomo-cli manage custom list
   mihomo-cli manage custom remove --domain <dom> [--via <proxy_or_group>]
+  # 检查域名走向（proxy/direct）
+  mihomo-cli manage check --domain <dom>
+  # 查看内置 dev 域名列表（默认plain，可选yaml/json）
+  mihomo-cli manage dev-list [--format plain|yaml|json]
 
 use_last_flag: |
   # 显式复用最近一次订阅（不默认自动复用，避免误用）

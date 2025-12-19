@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::collections::HashSet;
 
 use anyhow::{anyhow, Context};
 use clap::{Args, Parser, Subcommand};
@@ -17,7 +18,85 @@ use tracing_subscriber::EnvFilter;
     version,
     about = "Mihomo subscription merge CLI",
     long_about = "Generate Mihomo/Clash configuration files by combining a template with one or more subscriptions.\n\nUse `mihomo-cli merge --help` for command-specific options and defaults for runtime directories under ~/.config/mihomocli.",
-    arg_required_else_help = true
+    arg_required_else_help = true,
+    after_long_help = r#"
+Quick Start Examples
+
+  Merge (minimal, uses bundled CVR-aligned template):
+    mihomo-cli merge
+
+  Merge single subscription URL and write to default output:
+    mihomo-cli merge -s https://example.com/sub.yaml
+
+  Merge multiple sources (URL + local file):
+    mihomo-cli merge -s https://example.com/sub.yaml -s ./extra.yaml
+
+  Use the last successful subscription URL explicitly:
+    mihomo-cli merge --use-last
+
+  Print merged YAML to stdout (no file write):
+    mihomo-cli merge --stdout -s https://example.com/sub.yaml
+
+  Use a base-config to align ports/rules/groups with clash-verge-rev:
+    mihomo-cli merge --base-config ~/.config/mihomocli/base-config.yaml -s https://example.com/sub.yaml
+
+  Override subscription HTTP User-Agent:
+    mihomo-cli merge -s https://example.com/sub.yaml --subscription-ua "my-client/1.0"
+
+  Allow base64/share-link formats (trojan/vmess/ss):
+    mihomo-cli merge -s https://example.com/base64.txt --subscription-allow-base64
+
+  Dev rules (enabled by default). Change target group or disable:
+    mihomo-cli merge -s https://example.com/sub.yaml --dev-rules-via proxy
+    mihomo-cli merge -s https://example.com/sub.yaml --no-dev-rules
+    mihomo-cli merge -s https://example.com/sub.yaml --dev-rules-show
+
+  Override external controller fields in output config:
+    mihomo-cli merge -s https://example.com/sub.yaml \
+      --external-controller-url 127.0.0.1 \
+      --external-controller-port 9090 \
+      --external-controller-secret secret
+
+  Manage: Cache, Quick Custom Rules, and Check
+
+  Show / clear cached last subscription URL:
+    mihomo-cli manage cache show
+    mihomo-cli manage cache clear
+
+  Add a quick custom rule (prepend to rules):
+    # Force domain suffix via a proxy/group named "proxy"
+    mihomo-cli manage custom add --domain cache.nixos.org --kind suffix --via proxy
+    # Route a domain directly without proxy
+    mihomo-cli manage custom add --domain example.com --kind domain --via direct
+
+  List / remove quick custom rules:
+    mihomo-cli manage custom list
+    mihomo-cli manage custom remove --domain cache.nixos.org
+    mihomo-cli manage custom remove --domain cache.nixos.org --via proxy
+
+  Check whether a domain should go via proxy or direct:
+    mihomo-cli manage check --domain github.com    # proxy
+    mihomo-cli manage check --domain example.com   # direct (unless overridden by custom rules)
+
+  List all built-in dev domains considered proxy-worthy:
+    mihomo-cli manage dev-list
+    mihomo-cli manage dev-list --format yaml
+    mihomo-cli manage dev-list --format json
+
+Other Utilities
+
+  Initialize config folders and seed the default template:
+    mihomo-cli init
+
+  Validate output config with mihomo -t (paths auto-detected):
+    mihomo-cli test
+
+Notes
+
+  - Default directories live under ~/.config/mihomocli and ~/.cache/mihomocli.
+  - The CLI downloads geo resources on demand into ~/.config/mihomocli/resources/.
+  - Template lookup resolves relative paths under ~/.config/mihomocli/templates/.
+"#
 )]
 struct Cli {
     #[command(subcommand)]
@@ -504,93 +583,21 @@ fn resolve_dev_rules_via(via: &str, default_via: &str, cfg: &mihomo_core::ClashC
 }
 
 fn build_dev_rules(via: &str) -> Vec<String> {
-    // Common developer ecosystems that frequently require proxy access when fetching
-    // dependencies, Docker images, or build tool artifacts.
-    const DEV_RULE_TARGETS: &[(&str, &str)] = &[
-        // Git & source hosting
-        ("DOMAIN-SUFFIX", "github.com"),
-        ("DOMAIN-SUFFIX", "githubusercontent.com"),
-        ("DOMAIN-SUFFIX", "githubassets.com"),
-        ("DOMAIN-SUFFIX", "githubstatic.com"),
-        ("DOMAIN-SUFFIX", "ghcr.io"),
-        ("DOMAIN-SUFFIX", "gitlab.com"),
-        ("DOMAIN-SUFFIX", "gitee.com"),
-        // Go modules
-        ("DOMAIN-SUFFIX", "golang.org"),
-        ("DOMAIN-SUFFIX", "go.dev"),
-        ("DOMAIN-SUFFIX", "golang.google.cn"),
-        ("DOMAIN-SUFFIX", "proxy.golang.org"),
-        ("DOMAIN-SUFFIX", "proxy.golang.com"),
-        ("DOMAIN-SUFFIX", "sum.golang.org"),
-        ("DOMAIN-SUFFIX", "goproxy.cn"),
-        ("DOMAIN-SUFFIX", "goproxy.io"),
-        // Node.js ecosystem
-        ("DOMAIN-SUFFIX", "npmjs.com"),
-        ("DOMAIN-SUFFIX", "npmjs.org"),
-        ("DOMAIN-SUFFIX", "registry.npmjs.org"),
-        ("DOMAIN-SUFFIX", "registry.npmmirror.com"),
-        ("DOMAIN-SUFFIX", "nodejs.org"),
-        ("DOMAIN-SUFFIX", "yarnpkg.com"),
-        ("DOMAIN-SUFFIX", "pnpm.io"),
-        ("DOMAIN-SUFFIX", "unpkg.com"),
-        ("DOMAIN-SUFFIX", "npmmirror.com"),
-        // Python ecosystem
-        ("DOMAIN-SUFFIX", "pypi.org"),
-        ("DOMAIN-SUFFIX", "pythonhosted.org"),
-        ("DOMAIN-SUFFIX", "files.pythonhosted.org"),
-        // Rust ecosystem
-        ("DOMAIN-SUFFIX", "crates.io"),
-        ("DOMAIN-SUFFIX", "static.crates.io"),
-        ("DOMAIN-SUFFIX", "rustup.rs"),
-        ("DOMAIN-SUFFIX", "sh.rustup.rs"),
-        ("DOMAIN-SUFFIX", "rust-lang.org"),
-        ("DOMAIN-SUFFIX", "doc.rust-lang.org"),
-        ("DOMAIN-SUFFIX", "static.rust-lang.org"),
-        // Containers & registries
-        ("DOMAIN-SUFFIX", "docker.com"),
-        ("DOMAIN-SUFFIX", "docker.io"),
-        ("DOMAIN-SUFFIX", "dockerusercontent.com"),
-        ("DOMAIN-SUFFIX", "registry-1.docker.io"),
-        ("DOMAIN-SUFFIX", "download.docker.com"),
-        ("DOMAIN-SUFFIX", "quay.io"),
-        ("DOMAIN-SUFFIX", "registry.k8s.io"),
-        ("DOMAIN-SUFFIX", "k8s.gcr.io"),
-        ("DOMAIN-SUFFIX", "gcr.io"),
-        ("DOMAIN-SUFFIX", "pkg.dev"),
-        ("DOMAIN-SUFFIX", "dl.k8s.io"),
-        ("DOMAIN-SUFFIX", "packages.cloud.google.com"),
-        ("DOMAIN-SUFFIX", "apt.kubernetes.io"),
-        ("DOMAIN-SUFFIX", "storage.googleapis.com"),
-        ("DOMAIN-SUFFIX", "k3s.io"),
-        ("DOMAIN-SUFFIX", "update.k3s.io"),
-        ("DOMAIN-SUFFIX", "rancher.com"),
-        ("DOMAIN-SUFFIX", "rancher.io"),
-        // Misc build tooling & mirrors
-        ("DOMAIN-SUFFIX", "deno.land"),
-        ("DOMAIN-SUFFIX", "packagist.org"),
-        ("DOMAIN-SUFFIX", "repo.packagist.org"),
-        ("DOMAIN-SUFFIX", "clojars.org"),
-        ("DOMAIN-SUFFIX", "cdn.jsdelivr.net"),
-        ("DOMAIN-SUFFIX", "dl-cdn.alpinelinux.org"),
-        ("DOMAIN", "cache.nixos.org"),
-        // AI coding agents / API endpoints
-        ("DOMAIN-SUFFIX", "openai.com"),
-        ("DOMAIN-SUFFIX", "api.openai.com"),
-        ("DOMAIN-SUFFIX", "platform.openai.com"),
-        ("DOMAIN-SUFFIX", "anthropic.com"),
-        ("DOMAIN-SUFFIX", "api.anthropic.com"),
-        ("DOMAIN-SUFFIX", "claude.ai"),
-        ("DOMAIN-SUFFIX", "gemini.google.com"),
-        ("DOMAIN-SUFFIX", "generativelanguage.googleapis.com"),
-        ("DOMAIN-SUFFIX", "ai.google.dev"),
-        ("DOMAIN-SUFFIX", "cursor.sh"),
-        ("DOMAIN-SUFFIX", "api.cursor.sh"),
-    ];
-
     DEV_RULE_TARGETS
         .iter()
         .map(|(kind, target)| format!("{kind},{target},{via}"))
         .collect()
+}
+
+fn domain_matches_rule(kind: &str, target: &str, domain: &str) -> bool {
+    let d = domain.to_ascii_lowercase();
+    let t = target.to_ascii_lowercase();
+    match kind {
+        "DOMAIN" => d == t,
+        "DOMAIN-SUFFIX" => d == t || d.ends_with(&format!(".{t}")),
+        "DOMAIN-KEYWORD" => d.contains(&t),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -835,6 +842,12 @@ enum Manage {
     /// Manage quick custom rules that force domains via a specific proxy
     #[command(subcommand)]
     Custom(CustomCmd),
+
+    /// Check whether a domain should go via proxy or direct
+    Check(CheckArgs),
+
+    /// List all built-in dev rule domains that are considered proxy-worthy
+    DevList(DevListArgs),
 }
 
 #[derive(Subcommand)]
@@ -860,7 +873,7 @@ struct CustomAddArgs {
     /// Domain to match (e.g., cache.nixos.org)
     #[arg(long)]
     domain: String,
-    /// Proxy or group name to route via
+    /// Proxy or group name to route via (accepts special values: direct/reject)
     #[arg(long)]
     via: String,
     /// Match kind: domain|suffix|keyword (default: suffix)
@@ -878,12 +891,21 @@ struct CustomRemoveArgs {
     via: Option<String>,
 }
 
+#[derive(Args)]
+struct CheckArgs {
+    /// Domain to evaluate (e.g., github.com)
+    #[arg(long)]
+    domain: String,
+}
+
 async fn run_manage(cmd: Manage) -> anyhow::Result<()> {
     let paths = AppPaths::new()?;
     paths.ensure_runtime_dirs().await?;
     match cmd {
         Manage::Cache(c) => manage_cache(&paths, c).await,
         Manage::Custom(c) => manage_custom(&paths, c).await,
+        Manage::Check(c) => manage_check(&paths, c).await,
+        Manage::DevList(args) => manage_dev_list(args).await,
     }
 }
 
@@ -915,10 +937,18 @@ async fn manage_custom(paths: &AppPaths, cmd: CustomCmd) -> anyhow::Result<()> {
                 "keyword" => RuleKind::DomainKeyword,
                 _ => RuleKind::DomainSuffix,
             };
+            // Normalize well-known targets to canonical forms
+            let via_value = match args.via.to_ascii_lowercase().as_str() {
+                "direct" => "DIRECT".to_string(),
+                "reject" => "REJECT".to_string(),
+                // common group name in templates
+                "proxy" => "Proxy".to_string(),
+                _ => args.via.clone(),
+            };
             let rule = CustomRule {
                 domain: args.domain,
                 kind,
-                via: args.via,
+                via: via_value,
             };
             if !cfg.custom_rules.contains(&rule) {
                 cfg.custom_rules.push(rule);
@@ -958,6 +988,70 @@ async fn manage_custom(paths: &AppPaths, cmd: CustomCmd) -> anyhow::Result<()> {
             let after = cfg.custom_rules.len();
             storage::save_app_config(paths, &cfg).await?;
             println!("removed {} rule(s)", before.saturating_sub(after));
+        }
+    }
+    Ok(())
+}
+
+async fn manage_check(paths: &AppPaths, args: CheckArgs) -> anyhow::Result<()> {
+    let cfg = storage::load_app_config(paths).await?;
+    // Check user custom rules first (highest precedence)
+    for r in &cfg.custom_rules {
+        let kind = match r.kind {
+            RuleKind::Domain => "DOMAIN",
+            RuleKind::DomainSuffix => "DOMAIN-SUFFIX",
+            RuleKind::DomainKeyword => "DOMAIN-KEYWORD",
+        };
+        if domain_matches_rule(kind, &r.domain, &args.domain) {
+            if r.via.eq_ignore_ascii_case("direct") {
+                println!("direct");
+            } else {
+                println!("proxy");
+            }
+            return Ok(());
+        }
+    }
+
+    // Fallback: treat known dev endpoints as proxy-worthy
+    for (kind, target) in DEV_RULE_TARGETS.iter() {
+        if domain_matches_rule(kind, target, &args.domain) {
+            println!("proxy");
+            return Ok(());
+        }
+    }
+
+    // Default: direct
+    println!("direct");
+    Ok(())
+}
+
+#[derive(Args)]
+struct DevListArgs {
+    /// Output format: plain|yaml|json (default: plain)
+    #[arg(long, default_value = "plain")]
+    format: String,
+}
+
+async fn manage_dev_list(args: DevListArgs) -> anyhow::Result<()> {
+    // Collect unique domain targets from built-in dev rules
+    let mut set = HashSet::new();
+    for (_, target) in DEV_RULE_TARGETS.iter() {
+        set.insert(target.to_string());
+    }
+    let mut items: Vec<String> = set.into_iter().collect();
+    items.sort();
+
+    match args.format.as_str() {
+        "json" => {
+            println!("{}", serde_json::to_string_pretty(&items)?);
+        }
+        "yaml" => {
+            println!("{}", serde_yaml::to_string(&items)?);
+        }
+        _ => {
+            for d in items {
+                println!("{}", d);
+            }
         }
     }
     Ok(())

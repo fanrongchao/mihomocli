@@ -147,9 +147,12 @@ Notes:
   - Reuse cached URL explicitly: pass `--use-last` to `merge` when no `-s/--subscription` is given.
 
 - Quick custom rules (prepend to rules so they take precedence):
-  - Add: `mihomo-cli manage custom add --domain cache.nixos.org --via Proxy --kind suffix`
+  - Add: `mihomo-cli manage custom add --domain cache.nixos.org --via proxy --kind suffix`
+  - Add (DIRECT): `mihomo-cli manage custom add --domain cache.nixos.org --kind suffix --via direct`
   - List: `mihomo-cli manage custom list`
-  - Remove: `mihomo-cli manage custom remove --domain cache.nixos.org --via Proxy`
+  - Remove: `mihomo-cli manage custom remove --domain cache.nixos.org --via proxy`
+  - Check: `mihomo-cli manage check --domain github.com`  # prints `proxy` or `direct`
+  - Dev domains list: `mihomo-cli manage dev-list [--format plain|yaml|json]`
 
 ## Repository Layout
 - `crates/core`: Clash models, merge logic, subscription parsing, storage helpers

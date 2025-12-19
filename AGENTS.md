@@ -55,5 +55,8 @@ Dev-rules via fallback: if the requested group `Proxy` does not exist in the mer
 - Cached last subscription URL: `mihomo-cli manage cache show|clear`. Reuse it explicitly via `--use-last` when calling `merge` without `-s`.
 - Quick custom rules (prepend to rules):
   - Add: `mihomo-cli manage custom add --domain <dom> --via <proxy_or_group> [--kind domain|suffix|keyword]`
+  - Add (DIRECT): `mihomo-cli manage custom add --domain <dom> [--kind domain|suffix|keyword] --via direct`
   - List: `mihomo-cli manage custom list`
   - Remove: `mihomo-cli manage custom remove --domain <dom> [--via <proxy_or_group>]`
+  - Check: `mihomo-cli manage check --domain <dom>`  # prints `proxy` or `direct`
+  - Dev domains list: `mihomo-cli manage dev-list [--format plain|yaml|json]`
