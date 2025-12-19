@@ -12,7 +12,7 @@
 - Manage quick custom domain->proxy rules (`manage custom add/list/remove`)
 
 ## Quick Start
-Tip: For a reproducible toolchain, run commands inside the Nix dev shell first:
+Tip: Use the Nix dev shell for a pinned Rust toolchain. Either enter an interactive shell or invoke Cargo via `nix develop -c`.
 
 ```
 nix develop
@@ -24,8 +24,7 @@ mihomo-cli init
 ```
 
 ```bash
-# Build
-# Recommended: enter flake dev environment, then build
+# Build (one‑shot)
 nix develop -c cargo build -p mihomo-cli
 
 # Merge with default (bundled) template and remote subscription (output defaults to
@@ -89,7 +88,7 @@ mihomo -d ~/.config/mihomocli/resources -f ~/.config/mihomocli/output/config.yam
 Or validate quickly using the built-in test helper (wraps `mihomo -t`):
 
 ```
-mihomo-cli test \
+nix develop -c mihomo-cli test \
   --mihomo-dir ~/.config/mihomocli \
   --config ~/.config/mihomocli/output/config.yaml
 ```
@@ -168,9 +167,9 @@ Huge thanks to the [clash-verge-rev](https://github.com/clash-verge-rev/clash-ve
 ## Dev Workflow (flake + fmt + tests)
 
 - Enter flake dev: `nix develop`
-- Format: `cargo fmt`
-- Lint: `cargo clippy --all-targets --all-features`
-- Tests: `cargo test -p mihomo-core`
+- Format: `nix develop -c cargo fmt`
+- Lint: `nix develop -c cargo clippy --all-targets --all-features`
+- Tests: `nix develop -c cargo test -p mihomo-core`
 - E2E (local example):
   - `mihomo-cli merge --template examples/default.yaml --subscription examples/subscription.yaml --stdout`
 - E2E (provider URL):

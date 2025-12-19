@@ -19,20 +19,20 @@ output.
   runtime config merging logic. For now, rely on `~/.config/mihomocli/base-config.yaml`.
 
 ## Build, Test, and Development Commands
-- Preferred: enter flake dev shell
+
+Agents and contributors: always use the Nix flake dev shell to ensure a pinned Rust toolchain and dependencies. Prefer running Cargo through `nix develop -c …` in automation or when not staying in an interactive shell.
+
+- Enter dev shell (interactive):
   - `nix develop`
-- Build:
-  - `cargo build` (or `cargo build -p mihomo-cli`)
+- One‑shot commands (non‑interactive):
+  - Build: `nix develop -c cargo build` (or `nix develop -c cargo build -p mihomo-cli`)
+  - Tests: `nix develop -c cargo test -p mihomo-core`
+  - Lint/format: `nix develop -c cargo fmt` and `nix develop -c cargo clippy --all-targets --all-features`
 - Run CLI:
-  - `cargo run -p mihomo-cli -- merge --template examples/default.yaml --subscription https://example.com/sub.yaml`
-- Tests:
-  - `cargo test -p mihomo-core`
-- Formatting & linting (required before commit):
-  - `cargo fmt`
-  - `cargo clippy --all-targets --all-features`
+  - `nix develop -c cargo run -p mihomo-cli -- merge --template examples/default.yaml --subscription https://example.com/sub.yaml`
 
 - Validate mihomo config with real binary:
-  - `cargo run -p mihomo-cli -- test` (wraps `mihomo -t` with `-d ~/.config/mihomocli -f ~/.config/mihomocli/output/config.yaml -m`)
+  - `nix develop -c cargo run -p mihomo-cli -- test` (wraps `mihomo -t` with `-d ~/.config/mihomocli -f ~/.config/mihomocli/output/config.yaml -m`)
   - You may override paths via `--mihomo-dir` and `--config`.
 
 ## Coding Style & Naming Conventions
