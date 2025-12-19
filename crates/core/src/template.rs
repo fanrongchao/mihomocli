@@ -116,9 +116,9 @@ script1: test
 
         let merged = merge_mappings(merge_mapping, config_mapping);
         // Ensure original fields survive
-        assert!(merged.contains_key(&Value::from("script1")));
+        assert!(merged.contains_key(Value::from("script1")));
         // Ensure lowercase conversion happens
-        assert!(merged.contains_key(&Value::from("prepend-rules")));
+        assert!(merged.contains_key(Value::from("prepend-rules")));
     }
 
     #[test]

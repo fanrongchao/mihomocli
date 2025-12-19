@@ -42,18 +42,13 @@ fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SubscriptionKind {
+    #[default]
     Clash,
     Merge,
     Script,
-}
-
-impl Default for SubscriptionKind {
-    fn default() -> Self {
-        SubscriptionKind::Clash
-    }
 }
 
 impl Subscription {

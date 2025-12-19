@@ -22,6 +22,7 @@ pub struct ParseOptions {
 /// - First try native YAML deserialization.
 /// - Then attempt to decode base64-wrapped data.
 /// - Finally, treat the decoded/plain text as a list of share links (trojan/vmess/ss).
+#[allow(dead_code)]
 pub fn parse_subscription_payload(raw: &str) -> anyhow::Result<ClashConfig> {
     parse_subscription_payload_with_options(raw, ParseOptions { allow_base64: true })
 }
@@ -69,18 +70,19 @@ fn decode_candidates(raw: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
 
-    for decoded in [
+    for bytes in [
         STANDARD.decode(&filtered),
         URL_SAFE_NO_PAD.decode(&filtered),
-    ] {
-        if let Ok(bytes) = decoded {
-            if bytes.is_empty() {
-                continue;
-            }
-            if let Ok(text) = String::from_utf8(bytes) {
-                if is_mostly_printable(&text) && seen.insert(text.clone()) {
-                    out.push(text);
-                }
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if bytes.is_empty() {
+            continue;
+        }
+        if let Ok(text) = String::from_utf8(bytes) {
+            if is_mostly_printable(&text) && seen.insert(text.clone()) {
+                out.push(text);
             }
         }
     }
@@ -401,7 +403,7 @@ fn insert_u64(map: &mut Mapping, key: &str, value: u64) {
 
 fn pad_base64(input: &str) -> String {
     let mut padded = input.trim().to_string();
-    while padded.len() % 4 != 0 {
+    while !padded.len().is_multiple_of(4) {
         padded.push('=');
     }
     padded
@@ -420,14 +422,8 @@ mod tests {
         assert_eq!(config.proxies.len(), 1);
         let proxy = config.proxies.first().expect("proxy");
         let map = proxy.as_mapping().expect("mapping");
-        assert_eq!(
-            map.get(&Value::from("type")).and_then(Value::as_str),
-            Some("trojan")
-        );
-        assert_eq!(
-            map.get(&Value::from("server")).and_then(Value::as_str),
-            Some("example.com")
-        );
+        assert_eq!(map.get(Value::from("type")).and_then(Value::as_str), Some("trojan"));
+        assert_eq!(map.get(Value::from("server")).and_then(Value::as_str), Some("example.com"));
     }
 
     #[test]
@@ -449,18 +445,9 @@ mod tests {
         assert_eq!(config.proxies.len(), 1);
         let proxy = config.proxies.first().expect("proxy");
         let map = proxy.as_mapping().expect("mapping");
-        assert_eq!(
-            map.get(&Value::from("type")).and_then(Value::as_str),
-            Some("vmess")
-        );
-        assert_eq!(
-            map.get(&Value::from("server")).and_then(Value::as_str),
-            Some("vmess.example.com")
-        );
-        assert_eq!(
-            map.get(&Value::from("uuid")).and_then(Value::as_str),
-            Some("123e4567-e89b-12d3-a456-426614174000")
-        );
+        assert_eq!(map.get(Value::from("type")).and_then(Value::as_str), Some("vmess"));
+        assert_eq!(map.get(Value::from("server")).and_then(Value::as_str), Some("vmess.example.com"));
+        assert_eq!(map.get(Value::from("uuid")).and_then(Value::as_str), Some("123e4567-e89b-12d3-a456-426614174000"));
     }
 
     #[test]
@@ -472,22 +459,10 @@ mod tests {
         assert_eq!(config.proxies.len(), 1);
         let proxy = config.proxies.first().expect("proxy");
         let map = proxy.as_mapping().expect("mapping");
-        assert_eq!(
-            map.get(&Value::from("type")).and_then(Value::as_str),
-            Some("ss")
-        );
-        assert_eq!(
-            map.get(&Value::from("server")).and_then(Value::as_str),
-            Some("ss.example.com")
-        );
-        assert_eq!(
-            map.get(&Value::from("cipher")).and_then(Value::as_str),
-            Some("aes-256-gcm")
-        );
-        assert_eq!(
-            map.get(&Value::from("password")).and_then(Value::as_str),
-            Some("password")
-        );
+        assert_eq!(map.get(Value::from("type")).and_then(Value::as_str), Some("ss"));
+        assert_eq!(map.get(Value::from("server")).and_then(Value::as_str), Some("ss.example.com"));
+        assert_eq!(map.get(Value::from("cipher")).and_then(Value::as_str), Some("aes-256-gcm"));
+        assert_eq!(map.get(Value::from("password")).and_then(Value::as_str), Some("password"));
     }
 
     #[test]
@@ -497,16 +472,8 @@ mod tests {
         assert_eq!(config.proxies.len(), 1);
         let proxy = config.proxies.first().expect("proxy");
         let map = proxy.as_mapping().expect("mapping");
-        assert_eq!(
-            map.get(&Value::from("server")).and_then(Value::as_str),
-            Some("ss.example.com")
-        );
-        assert_eq!(
-            map.get(&Value::from("port"))
-                .and_then(Value::as_u64)
-                .map(|v| v as u16),
-            Some(8388)
-        );
+        assert_eq!(map.get(Value::from("server")).and_then(Value::as_str), Some("ss.example.com"));
+        assert_eq!(map.get(Value::from("port")).and_then(Value::as_u64).map(|v| v as u16), Some(8388));
     }
 
     #[test]
@@ -523,7 +490,7 @@ ss://aes-128-gcm:test@example3.com:8388#SS1"#;
             .iter()
             .filter_map(|p| {
                 p.as_mapping()
-                    .and_then(|m| m.get(&Value::from("type")).and_then(Value::as_str))
+                    .and_then(|m| m.get(Value::from("type")).and_then(Value::as_str))
             })
             .collect();
         assert!(types.contains(&"trojan"));

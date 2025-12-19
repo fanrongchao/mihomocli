@@ -52,7 +52,7 @@ impl ClashConfig {
             .iter()
             .filter_map(|proxy| match proxy {
                 Value::Mapping(map) => map
-                    .get(&Value::from("name"))
+                    .get(Value::from("name"))
                     .and_then(|value| value.as_str())
                     .map(|s| s.to_string()),
                 _ => None,
@@ -65,11 +65,11 @@ impl ClashConfig {
             .iter()
             .filter_map(|group| match group {
                 Value::Mapping(map) => map
-                    .get(&Value::from("name"))
+                    .get(Value::from("name"))
                     .and_then(|value| value.as_str())
                     .map(|s| s.to_string()),
-                _ => None,
-            })
-            .collect()
+            _ => None,
+        })
+        .collect()
     }
 }

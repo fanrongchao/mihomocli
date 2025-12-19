@@ -16,8 +16,9 @@ pub fn merge_configs(template: ClashConfig, subs: Vec<ClashConfig>) -> ClashConf
     for mut sub in subs {
         collect_proxy_names(&sub.proxies, &mut all_proxy_names, &mut seen_proxy_names);
 
-        out.proxies.extend(sub.proxies.drain(..));
-        out.rules.extend(sub.rules.drain(..));
+        // Prefer append over extend(drain(..)) per clippy
+        out.proxies.append(&mut sub.proxies);
+        out.rules.append(&mut sub.rules);
         out.proxy_groups = merge_proxy_groups(out.proxy_groups, sub.proxy_groups);
 
         for (key, value) in sub.extra.into_iter() {
@@ -158,7 +159,7 @@ fn populate_default_selector(groups: &mut [Value], proxy_names: &[String]) {
 fn proxy_group_name(value: &Value) -> Option<String> {
     match value {
         Value::Mapping(map) => map
-            .get(&Value::from("name"))
+            .get(Value::from("name"))
             .and_then(|value| value.as_str())
             .map(|s| s.to_string()),
         _ => None,
@@ -169,7 +170,7 @@ fn collect_proxy_names(values: &[Value], dest: &mut Vec<String>, seen: &mut Hash
     for value in values {
         if let Value::Mapping(map) = value {
             if let Some(name) = map
-                .get(&Value::from("name"))
+                .get(Value::from("name"))
                 .and_then(|value| value.as_str())
                 .map(|s| s.to_string())
             {
@@ -232,8 +233,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut sub = ClashConfig::default();
-        sub.port = Some(8888);
+        let sub = ClashConfig { port: Some(8888), ..Default::default() };
 
         let merged = merge_configs(template, vec![sub]);
         assert_eq!(merged.port, Some(7890));
@@ -267,7 +267,7 @@ mod tests {
         let merged = merge_configs(template, vec![sub]);
         assert!(merged.proxy_groups.iter().any(|group| match group {
             Value::Mapping(map) => {
-                map.get(&Value::from("proxies"))
+                map.get(Value::from("proxies"))
                     .and_then(|value| value.as_sequence())
                     .map(|seq| seq.iter().any(|value| value.as_str() == Some("B")))
                     .unwrap_or(false)
@@ -278,11 +278,9 @@ mod tests {
 
     #[test]
     fn test_merge_rules_append() {
-        let mut template = ClashConfig::default();
-        template.rules = vec!["RULE,TEMPLATE".to_string()];
+        let template = ClashConfig { rules: vec!["RULE,TEMPLATE".to_string()], ..Default::default() };
 
-        let mut sub = ClashConfig::default();
-        sub.rules = vec!["RULE,SUB".to_string()];
+        let sub = ClashConfig { rules: vec!["RULE,SUB".to_string()], ..Default::default() };
 
         let merged = merge_configs(template, vec![sub]);
         assert_eq!(merged.rules, vec!["RULE,TEMPLATE", "RULE,SUB"]);
@@ -290,10 +288,12 @@ mod tests {
 
     #[test]
     fn test_apply_base_config_overrides_rules_and_groups() {
-        let mut base = ClashConfig::default();
-        base.port = Some(8000);
-        base.rules = vec!["BASE_RULE".to_string()];
-        base.proxy_groups = vec![selector_group("BaseGroup", &[])];
+        let mut base = ClashConfig {
+            port: Some(8000),
+            rules: vec!["BASE_RULE".to_string()],
+            proxy_groups: vec![selector_group("BaseGroup", &[])],
+            ..Default::default()
+        };
         base.extra.insert("profile".into(), Value::from("store"));
 
         let mut merged = ClashConfig::default();
@@ -306,7 +306,7 @@ mod tests {
         assert_eq!(result.proxy_groups.len(), 1);
         let group = result.proxy_groups[0].as_mapping().unwrap();
         let proxies = group
-            .get(&Value::from("proxies"))
+            .get(Value::from("proxies"))
             .and_then(|v| v.as_sequence())
             .unwrap();
         assert_eq!(proxies.len(), 1);
@@ -360,9 +360,7 @@ mod tests {
         let mut base = ClashConfig::default();
         base.extra.insert("mixed-port".into(), Value::from(7890));
 
-        let mut merged = ClashConfig::default();
-        merged.port = Some(8080);
-        merged.socks_port = Some(8081);
+        let merged = ClashConfig { port: Some(8080), socks_port: Some(8081), ..Default::default() };
 
         let result = apply_base_config(merged, &base);
         // Legacy ports should be cleared when mixed-port is present
