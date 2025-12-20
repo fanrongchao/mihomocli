@@ -138,6 +138,49 @@ Notes:
 - `--dev-rules-show`: Print the generated dev rule list (useful for inspection without modifying output).
 - External controller settings: `--external-controller-url <HOST>`, `--external-controller-port <PORT>`, and `--external-controller-secret <SECRET>` to set `external-controller` and `secret` in the merged output.
 
+### Fake‑IP Modes and Bypass
+
+- Modes (Mihomo DNS in `enhanced-mode: fake-ip`):
+  - Blacklist: use fake‑ip for all domains except those in `dns.fake-ip-filter`.
+  - Whitelist: only domains in `dns.fake-ip-filter` use fake‑ip; others resolve real IPs.
+
+- Recommended for “指定的域名不走 fake‑ip”:
+  - `--fake-ip-bypass <PATTERN>`: Append exemptions to `dns.fake-ip-filter` and ensure `fake-ip-filter-mode: blacklist`. Repeatable.
+  - Examples: `--fake-ip-bypass '+.zhsjf.cn' --fake-ip-bypass 'hs.zhsjf.cn'`.
+
+- Advanced (optional):
+  - `--fake-ip-filter-add <PATTERN>`: Append entries to `dns.fake-ip-filter` without changing mode.
+  - `--fake-ip-filter-mode <blacklist|whitelist>`: Explicitly set `dns.fake-ip-filter-mode`.
+
+- Validate at runtime (with Mihomo running and DNS hooked):
+  - `getent ahosts hs.zhsjf.cn`
+    - Exempted: returns real public IPs (not in `198.18.0.0/16`).
+    - Not exempted: returns an IP inside `198.18.0.0/16` (default `fake-ip-range`).
+
+### Dry‑Run Summary Example
+
+Preview what would be generated, without writing the file:
+
+```bash
+mihomo-cli merge \
+  -s https://example.com/sub.yaml \
+  --fake-ip-bypass '+.zhsjf.cn' \
+  --fake-ip-bypass 'hs.zhsjf.cn' \
+  --dev-rules-via Proxy \
+  --dry-run
+```
+
+Typical output:
+
+```
+dry-run summary:
+- proxies: 182, groups: 9, rules: 1203
+- fake-ip: mode=blacklist, filter+=2 (requested), total=15
+- dev-rules: enabled=true, via=Proxy, added=14
+- external-controller: 127.0.0.1:9097, secret=unset
+- output: would write to /home/<you>/.config/mihomocli/output/config.yaml (suppressed by --dry-run)
+```
+
 ## Cache and Quick Rules
 
 - Cache last subscription URL:

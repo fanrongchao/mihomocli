@@ -244,6 +244,11 @@ merge_rules_detailed: |
   - 显式开启 `--subscription-allow-base64` 时，允许解析 base64/分享链接清单（trojan/vmess/ss）。
 - 可通过 `--subscription-ua` 覆盖默认 UA。
 - `--dev-rules` 默认开启，会在最终输出前插入一批常用开发依赖域名（涵盖 GitHub/GitLab、Go module proxy、npm/yarn/pnpm、PyPI、crates.io、Kubernetes/k3s 镜像与下载源、Docker/GCR、cache.nixos.org，以及主流 AI 编程代理如 OpenAI/Codex、Anthropic Claude、Google Gemini、Cursor、OpenCode 等）的 proxy 规则。默认指向 `Proxy`，可用 `--dev-rules-via` 覆盖；需要查看默认列表时可使用 `--dev-rules-show`，若不需要可通过 `--no-dev-rules` 禁用。
+- Fake‑IP 相关：
+  - `--fake-ip-bypass <PATTERN>`：将 PATTERN 追加到 `dns.fake-ip-filter`，并确保 `fake-ip-filter-mode: blacklist`。用于“指定的域名不走 fake‑ip”与规避 DNS 劫持。
+  - `--fake-ip-filter-add <PATTERN>`：旧标志，仅追加到 `dns.fake-ip-filter`，不改变 mode。
+  - `--fake-ip-filter-mode <blacklist|whitelist>`：显式设置假 IP 过滤模式（高级用法）。
+  - 推荐使用 `--fake-ip-bypass` 来添加豁免：例如 `--fake-ip-bypass '+.zhsjf.cn' --fake-ip-bypass 'hs.zhsjf.cn'`。
 - 示例提供商（用于本地端到端验证）：
   `https://example.com/sub.yaml`
      - rules:

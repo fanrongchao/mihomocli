@@ -157,6 +157,15 @@ Notes:
     Change the target proxy/group with --dev-rules-via (defaults to 'Proxy'). Disable with --no-dev-rules.
 
   - Use --dev-rules-show to print the generated list (without changing output unless --dev-rules is enabled).
+
+  - Fake-IP bypass: To exempt domains from fake-ip (avoid DNS hijack),
+    use --fake-ip-bypass <PATTERN>. This appends to dns.fake-ip-filter and
+    ensures fake-ip-filter-mode: blacklist. Examples:
+
+      mihomo-cli merge \
+        -s https://example.com/sub.yaml \
+        --fake-ip-bypass '+.zhsjf.cn' \
+        --fake-ip-bypass 'hs.zhsjf.cn'
 "#
     )]
     Merge(MergeArgs),
@@ -240,6 +249,24 @@ struct MergeArgs {
     /// Secret used by external controller API
     #[arg(long = "external-controller-secret")]
     external_controller_secret: Option<String>,
+
+    /// Append entries to dns.fake-ip-filter (to avoid DNS hijacking under fake-ip mode)
+    /// Example: --fake-ip-filter-add "+.zhsjf.cn" --fake-ip-filter-add "hs.zhsjf.cn"
+    #[arg(long = "fake-ip-filter-add")]
+    fake_ip_filter_add: Vec<String>,
+
+    /// Set dns.fake-ip-filter-mode: blacklist|whitelist (only applies in fake-ip mode)
+    #[arg(long = "fake-ip-filter-mode")]
+    fake_ip_filter_mode: Option<String>,
+
+    /// Bypass fake-ip for specific domains/patterns (shorthand for adding to dns.fake-ip-filter in blacklist mode)
+    /// Example: --fake-ip-bypass '+.zhsjf.cn' --fake-ip-bypass 'hs.zhsjf.cn'
+    #[arg(long = "fake-ip-bypass")]
+    fake_ip_bypass: Vec<String>,
+
+    /// Do not write output; print a concise summary of the merged result
+    #[arg(long = "dry-run", default_value_t = false)]
+    dry_run: bool,
 }
 
 #[tokio::main]
@@ -411,6 +438,8 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
     }
 
     let mut dev_rules_listing = None;
+    let mut summary_dev_via: Option<String> = None;
+    let mut summary_dev_added: usize = 0;
     if args.dev_rules || args.dev_rules_show {
         let resolved_via =
             resolve_dev_rules_via(&args.dev_rules_via, DEFAULT_DEV_RULE_VIA, &merged);
@@ -427,6 +456,11 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
             let mut combined = list.clone();
             combined.extend(merged.rules.into_iter());
             merged.rules = combined;
+            summary_dev_via = Some(resolved_via.clone());
+            summary_dev_added = list.len();
+        } else {
+            // even if not applied, keep via for summary visibility
+            summary_dev_via = Some(resolved_via.clone());
         }
         dev_rules_listing = Some(list);
     }
@@ -485,6 +519,82 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
         }
     }
 
+    // Append fake-ip bypass entries: combine new clearer option with legacy flag
+    let mut bypass_entries: Vec<String> = Vec::new();
+    bypass_entries.extend(args.fake_ip_bypass.iter().cloned());
+    bypass_entries.extend(args.fake_ip_filter_add.iter().cloned());
+    if !bypass_entries.is_empty() {
+        use serde_yaml::{Mapping, Value};
+        // Ensure dns mapping exists
+        let dns_value = merged
+            .extra
+            .entry("dns".to_string())
+            .or_insert_with(|| Value::Mapping(Mapping::new()));
+        if let Value::Mapping(dns_map) = dns_value {
+            // Ensure fake-ip-filter sequence exists
+            let key = Value::String("fake-ip-filter".to_string());
+            let filter_seq = dns_map
+                .entry(key)
+                .or_insert_with(|| Value::Sequence(Vec::new()));
+            if let Value::Sequence(seq) = filter_seq {
+                for item in bypass_entries {
+                    seq.push(Value::String(item));
+                }
+            }
+            // Force blacklist mode when user requests bypass entries
+            let mode_key = Value::String("fake-ip-filter-mode".to_string());
+            let current_mode = dns_map.get(&mode_key).and_then(|v| v.as_str());
+            let desired = "blacklist";
+            if current_mode.map(|s| s.eq_ignore_ascii_case(desired)) != Some(true) {
+                if let Some(cm) = current_mode {
+                    warn!(current = %cm, "overriding fake-ip-filter-mode to 'blacklist' for --fake-ip-bypass");
+                }
+                dns_map.insert(mode_key, Value::String(desired.to_string()));
+            }
+        }
+    }
+
+    // Apply fake-ip-filter-mode if provided explicitly (advanced)
+    if let Some(mode) = args.fake_ip_filter_mode.as_ref() {
+        let m = mode.to_ascii_lowercase();
+        if m == "blacklist" || m == "whitelist" {
+            use serde_yaml::{Mapping, Value};
+            let dns_value = merged
+                .extra
+                .entry("dns".to_string())
+                .or_insert_with(|| Value::Mapping(Mapping::new()));
+            if let Value::Mapping(dns_map) = dns_value {
+                // If user also used --fake-ip-bypass and asks for whitelist, warn and keep blacklist
+                let requested_whitelist = m == "whitelist";
+                let used_bypass = !args.fake_ip_bypass.is_empty();
+                if requested_whitelist && used_bypass {
+                    warn!("--fake-ip-bypass works with blacklist mode; keeping 'blacklist' instead of requested 'whitelist'");
+                } else {
+                    dns_map.insert(
+                        Value::String("fake-ip-filter-mode".to_string()),
+                        Value::String(m),
+                    );
+                }
+            }
+        } else {
+            warn!(
+                value = %mode,
+                "invalid --fake-ip-filter-mode (expected 'blacklist' or 'whitelist')"
+            );
+        }
+    }
+
+    // If dry-run, print a concise summary and skip writing
+    if args.dry_run {
+        print_merge_summary(&merged, &args, summary_dev_via.as_deref(), summary_dev_added, &paths);
+        if let Some(list) = dev_rules_listing.as_ref().filter(|_| args.dev_rules_show) {
+            for rule in list {
+                eprintln!("dev-rule: {}", rule);
+            }
+        }
+        return Ok(());
+    }
+
     let yaml = merged.to_yaml_string()?;
 
     if args.stdout {
@@ -523,6 +633,66 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn print_merge_summary(
+    merged: &mihomo_core::ClashConfig,
+    args: &MergeArgs,
+    dev_via: Option<&str>,
+    dev_added: usize,
+    paths: &AppPaths,
+) {
+    use serde_yaml::Value;
+
+    let proxies = merged.proxy_names().len();
+    let groups = merged.proxy_group_names().len();
+    let rules = merged.rules.len();
+
+    // DNS fake-ip summary
+    let mut dns_mode: Option<String> = None;
+    let mut dns_filter_total: Option<usize> = None;
+    if let Some(Value::Mapping(dns)) = merged.extra.get("dns") {
+        if let Some(Value::String(m)) = dns.get(&Value::String("fake-ip-filter-mode".into())) {
+            dns_mode = Some(m.clone());
+        }
+        if let Some(Value::Sequence(seq)) = dns.get(&Value::String("fake-ip-filter".into())) {
+            dns_filter_total = Some(seq.len());
+        }
+    }
+
+    // External controller
+    let mut ext_ctrl: Option<String> = None;
+    if let Some(Value::String(s)) = merged.extra.get("external-controller") {
+        ext_ctrl = Some(s.clone());
+    }
+    let secret_present = merged.extra.get("secret").and_then(|v| v.as_str()).is_some();
+
+    println!("dry-run summary:");
+    println!("- proxies: {}, groups: {}, rules: {}", proxies, groups, rules);
+    println!(
+        "- fake-ip: mode={}, filter+={} (requested), total={}",
+        dns_mode.as_deref().unwrap_or("<none>"),
+        args.fake_ip_bypass.len(),
+        dns_filter_total
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "<unknown>".into())
+    );
+    println!(
+        "- dev-rules: enabled={}, via={}, added={}",
+        if args.dev_rules { "true" } else { "false" },
+        dev_via.unwrap_or("<n/a>"),
+        if args.dev_rules { dev_added } else { 0 }
+    );
+    println!(
+        "- external-controller: {}, secret={}",
+        ext_ctrl.unwrap_or_else(|| "<unset>".into()),
+        if secret_present { "set" } else { "unset" }
+    );
+    let would_write = args
+        .output
+        .clone()
+        .unwrap_or_else(|| paths.output_config_path());
+    println!("- output: would write to {} (suppressed by --dry-run)", would_write.display());
 }
 
 fn resolve_template_path(paths: &AppPaths, provided: &Path) -> PathBuf {
@@ -889,6 +1059,21 @@ enum Manage {
     Check(CheckArgs),
 
     /// List all built-in dev rule domains that are considered proxy-worthy
+    #[command(
+        about = "List built-in dev domains",
+        long_about = "List the built-in developer/infra domains considered proxy-worthy.",
+        after_long_help = r#"
+Tips
+
+  - Preview the dev rules without writing a file:
+
+      mihomo-cli merge --dev-rules-show --dry-run
+
+  - Apply dev rules to the merged config using a specific group:
+
+      mihomo-cli merge -s https://example.com/sub.yaml --dev-rules-via Proxy --dry-run
+"#
+    )]
     DevList(DevListArgs),
 }
 

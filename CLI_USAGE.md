@@ -52,6 +52,10 @@ Key flags:
  - `--external-controller-url <HOST>`: Host/IP for the external controller (e.g., `0.0.0.0`).
  - `--external-controller-port <PORT>`: Port for the external controller (e.g., `9090`).
  - `--external-controller-secret <SECRET>`: Secret for the external controller API.
+- `--fake-ip-filter-add <PATTERN>`: Append entries to `dns.fake-ip-filter` (useful to bypass DNS hijacking when `dns.enhanced-mode: fake-ip`). Repeatable. Examples: `--fake-ip-filter-add '+.zhsjf.cn' --fake-ip-filter-add 'hs.zhsjf.cn'`.
+- `--fake-ip-filter-mode <MODE>`: Set `dns.fake-ip-filter-mode` to `blacklist` or `whitelist`.
+- `--fake-ip-bypass <PATTERN>`: Clearer shorthand for exemptions. Appends to `dns.fake-ip-filter` and ensures `fake-ip-filter-mode: blacklist`. Repeatable. Use this when you want specified domains not to use fake‑ip, e.g., `--fake-ip-bypass '+.zhsjf.cn'`.
+ - `--dry-run`: Do not write output; print a concise summary (proxies/groups/rules counts, fake‑ip mode + number of bypass entries requested, dev‑rules via and count, external-controller presence).
 
 ### `init`
 
