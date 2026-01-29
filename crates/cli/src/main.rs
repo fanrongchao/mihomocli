@@ -617,16 +617,21 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
                     .unwrap_or("blacklist");
 
                 if !filter_mode.eq_ignore_ascii_case("whitelist") {
-                    let wanted = "+.cluster.local";
+                    // Cover both the canonical FQDNs and resolver-expanded names
+                    // (when search domains are appended).
+                    let wanted = ["+.cluster.local", "*.cluster.local.*"];
+
                     let filter_seq = dns_map
                         .entry(filter_key)
                         .or_insert_with(|| Value::Sequence(Vec::new()));
 
                     if let Value::Sequence(seq) = filter_seq {
-                        let exists = seq.iter().any(|v| v.as_str() == Some(wanted));
-                        if !exists {
-                            seq.push(Value::String(wanted.to_string()));
-                            info!(value = %wanted, "auto-added fake-ip bypass");
+                        for item in wanted {
+                            let exists = seq.iter().any(|v| v.as_str() == Some(item));
+                            if !exists {
+                                seq.push(Value::String(item.to_string()));
+                                info!(value = %item, "auto-added fake-ip bypass");
+                            }
                         }
                     }
                 }
