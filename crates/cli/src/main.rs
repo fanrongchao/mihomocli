@@ -634,6 +634,28 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
                             }
                         }
                     }
+
+                    // Route Kubernetes cluster DNS to kube-dns instead of public resolvers.
+                    // This avoids fake-ip responses and ensures service discovery works when
+                    // tun dns-hijack intercepts pod DNS traffic.
+                    let policy_key = Value::String("nameserver-policy".to_string());
+                    let policy_value = dns_map
+                        .entry(policy_key)
+                        .or_insert_with(|| Value::Mapping(Mapping::new()));
+                    if let Value::Mapping(policy_map) = policy_value {
+                        let k8s_key = Value::String("+.cluster.local".to_string());
+                        if !policy_map.contains_key(&k8s_key) {
+                            policy_map.insert(
+                                k8s_key,
+                                Value::Sequence(vec![Value::String("10.43.0.10".to_string())]),
+                            );
+                            info!(
+                                domain = "+.cluster.local",
+                                server = "10.43.0.10",
+                                "auto-added nameserver-policy"
+                            );
+                        }
+                    }
                 }
             }
         }
