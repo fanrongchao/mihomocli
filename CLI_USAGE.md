@@ -55,6 +55,7 @@ Key flags:
 - `--fake-ip-filter-add <PATTERN>`: Append entries to `dns.fake-ip-filter` (useful to bypass DNS hijacking when `dns.enhanced-mode: fake-ip`). Repeatable. Examples: `--fake-ip-filter-add '+.zhsjf.cn' --fake-ip-filter-add 'hs.zhsjf.cn'`.
 - `--fake-ip-filter-mode <MODE>`: Set `dns.fake-ip-filter-mode` to `blacklist` or `whitelist`.
 - `--fake-ip-bypass <PATTERN>`: Clearer shorthand for exemptions. Appends to `dns.fake-ip-filter` and ensures `fake-ip-filter-mode: blacklist`. Repeatable. Use this when you want specified domains not to use fake‑ip, e.g., `--fake-ip-bypass '+.zhsjf.cn'`.
+- `--k8s-cidr-exclude <CIDR>`: Append CIDRs to `tun.route-exclude-address` (repeatable). Use this for Kubernetes Pod/Service CIDRs to avoid tun-mode hijacking. Defaults include `10.42.0.0/16` and `10.43.0.0/16`.
  - `--dry-run`: Do not write output; print a concise summary (proxies/groups/rules counts, fake‑ip mode + number of bypass entries requested, dev‑rules via and count, external-controller presence).
 
 ### `init`

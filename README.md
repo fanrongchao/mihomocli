@@ -79,6 +79,11 @@ Notes:
 - It leaves `proxy-groups` and `rules` empty so the provider subscription defines them fully.
 - `secret` is empty by default; set it in your own copy if needed.
 
+Kubernetes + tun note
+
+- If you run Kubernetes (k3s/k8s) on the same host with tun + dns-hijack enabled, exclude the Pod/Service CIDRs from tun.
+- Defaults already add `10.42.0.0/16` and `10.43.0.0/16` (k3s defaults). Add more with `--k8s-cidr-exclude <CIDR>`.
+
 Run Mihomo with the generated configuration and resources:
 
 ```bash

@@ -259,6 +259,12 @@ struct MergeArgs {
     #[arg(long = "fake-ip-filter-mode")]
     fake_ip_filter_mode: Option<String>,
 
+    /// Add CIDRs to tun.route-exclude-address (repeatable).
+    /// Useful for Kubernetes Pod/Service CIDRs to avoid tun DNS/service hijacking.
+    /// Defaults already include 10.42.0.0/16 and 10.43.0.0/16.
+    #[arg(long = "k8s-cidr-exclude")]
+    k8s_cidr_exclude: Vec<String>,
+
     /// Bypass fake-ip for specific domains/patterns (shorthand for adding to dns.fake-ip-filter in blacklist mode)
     /// Example: --fake-ip-bypass '+.zhsjf.cn' --fake-ip-bypass 'hs.zhsjf.cn'
     #[arg(long = "fake-ip-bypass")]
@@ -657,10 +663,18 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
                 .or_insert_with(|| Value::Sequence(Vec::new()));
 
             if let Value::Sequence(seq) = seq_value {
-                for cidr in ["10.42.0.0/16", "10.43.0.0/16"] {
-                    let exists = seq.iter().any(|v| v.as_str() == Some(cidr));
+                let mut cidrs: Vec<String> =
+                    vec!["10.42.0.0/16".to_string(), "10.43.0.0/16".to_string()];
+                cidrs.extend(args.k8s_cidr_exclude.iter().cloned());
+
+                for cidr in cidrs {
+                    if !cidr.contains('/') {
+                        warn!(value = %cidr, "invalid CIDR for --k8s-cidr-exclude (expected like 10.42.0.0/16)");
+                        continue;
+                    }
+                    let exists = seq.iter().any(|v| v.as_str() == Some(cidr.as_str()));
                     if !exists {
-                        seq.push(Value::String(cidr.to_string()));
+                        seq.push(Value::String(cidr.clone()));
                         info!(value = %cidr, "auto-added tun route-exclude-address");
                     }
                 }
