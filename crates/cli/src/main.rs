@@ -584,9 +584,65 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
         }
     }
 
+    // Ensure Kubernetes cluster DNS names are not forced into fake-ip.
+    //
+    // When tun + dns-hijack is enabled, in-cluster lookups like
+    // *.svc.cluster.local may be intercepted and incorrectly resolved into the
+    // fake-ip range (198.18.0.0/16), breaking Kubernetes service discovery.
+    //
+    // Keep this minimal and only apply in fake-ip mode when filter mode is not
+    // whitelist.
+    {
+        use serde_yaml::{Mapping, Value};
+
+        let dns_value = merged
+            .extra
+            .entry("dns".to_string())
+            .or_insert_with(|| Value::Mapping(Mapping::new()));
+
+        if let Value::Mapping(dns_map) = dns_value {
+            let enhanced_key = Value::String("enhanced-mode".to_string());
+            let mode_key = Value::String("fake-ip-filter-mode".to_string());
+            let filter_key = Value::String("fake-ip-filter".to_string());
+
+            let enhanced = dns_map
+                .get(&enhanced_key)
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            if enhanced.eq_ignore_ascii_case("fake-ip") {
+                let filter_mode = dns_map
+                    .get(&mode_key)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("blacklist");
+
+                if !filter_mode.eq_ignore_ascii_case("whitelist") {
+                    let wanted = "+.cluster.local";
+                    let filter_seq = dns_map
+                        .entry(filter_key)
+                        .or_insert_with(|| Value::Sequence(Vec::new()));
+
+                    if let Value::Sequence(seq) = filter_seq {
+                        let exists = seq.iter().any(|v| v.as_str() == Some(wanted));
+                        if !exists {
+                            seq.push(Value::String(wanted.to_string()));
+                            info!(value = %wanted, "auto-added fake-ip bypass");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // If dry-run, print a concise summary and skip writing
     if args.dry_run {
-        print_merge_summary(&merged, &args, summary_dev_via.as_deref(), summary_dev_added, &paths);
+        print_merge_summary(
+            &merged,
+            &args,
+            summary_dev_via.as_deref(),
+            summary_dev_added,
+            &paths,
+        );
         if let Some(list) = dev_rules_listing.as_ref().filter(|_| args.dev_rules_show) {
             for rule in list {
                 eprintln!("dev-rule: {}", rule);
@@ -665,10 +721,17 @@ fn print_merge_summary(
     if let Some(Value::String(s)) = merged.extra.get("external-controller") {
         ext_ctrl = Some(s.clone());
     }
-    let secret_present = merged.extra.get("secret").and_then(|v| v.as_str()).is_some();
+    let secret_present = merged
+        .extra
+        .get("secret")
+        .and_then(|v| v.as_str())
+        .is_some();
 
     println!("dry-run summary:");
-    println!("- proxies: {}, groups: {}, rules: {}", proxies, groups, rules);
+    println!(
+        "- proxies: {}, groups: {}, rules: {}",
+        proxies, groups, rules
+    );
     println!(
         "- fake-ip: mode={}, filter+={} (requested), total={}",
         dns_mode.as_deref().unwrap_or("<none>"),
@@ -692,7 +755,10 @@ fn print_merge_summary(
         .output
         .clone()
         .unwrap_or_else(|| paths.output_config_path());
-    println!("- output: would write to {} (suppressed by --dry-run)", would_write.display());
+    println!(
+        "- output: would write to {} (suppressed by --dry-run)",
+        would_write.display()
+    );
 }
 
 fn resolve_template_path(paths: &AppPaths, provided: &Path) -> PathBuf {

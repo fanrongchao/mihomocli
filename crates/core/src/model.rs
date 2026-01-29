@@ -68,8 +68,8 @@ impl ClashConfig {
                     .get(Value::from("name"))
                     .and_then(|value| value.as_str())
                     .map(|s| s.to_string()),
-            _ => None,
-        })
-        .collect()
+                _ => None,
+            })
+            .collect()
     }
 }

@@ -422,8 +422,14 @@ mod tests {
         assert_eq!(config.proxies.len(), 1);
         let proxy = config.proxies.first().expect("proxy");
         let map = proxy.as_mapping().expect("mapping");
-        assert_eq!(map.get(Value::from("type")).and_then(Value::as_str), Some("trojan"));
-        assert_eq!(map.get(Value::from("server")).and_then(Value::as_str), Some("example.com"));
+        assert_eq!(
+            map.get(Value::from("type")).and_then(Value::as_str),
+            Some("trojan")
+        );
+        assert_eq!(
+            map.get(Value::from("server")).and_then(Value::as_str),
+            Some("example.com")
+        );
     }
 
     #[test]
@@ -445,9 +451,18 @@ mod tests {
         assert_eq!(config.proxies.len(), 1);
         let proxy = config.proxies.first().expect("proxy");
         let map = proxy.as_mapping().expect("mapping");
-        assert_eq!(map.get(Value::from("type")).and_then(Value::as_str), Some("vmess"));
-        assert_eq!(map.get(Value::from("server")).and_then(Value::as_str), Some("vmess.example.com"));
-        assert_eq!(map.get(Value::from("uuid")).and_then(Value::as_str), Some("123e4567-e89b-12d3-a456-426614174000"));
+        assert_eq!(
+            map.get(Value::from("type")).and_then(Value::as_str),
+            Some("vmess")
+        );
+        assert_eq!(
+            map.get(Value::from("server")).and_then(Value::as_str),
+            Some("vmess.example.com")
+        );
+        assert_eq!(
+            map.get(Value::from("uuid")).and_then(Value::as_str),
+            Some("123e4567-e89b-12d3-a456-426614174000")
+        );
     }
 
     #[test]
@@ -459,10 +474,22 @@ mod tests {
         assert_eq!(config.proxies.len(), 1);
         let proxy = config.proxies.first().expect("proxy");
         let map = proxy.as_mapping().expect("mapping");
-        assert_eq!(map.get(Value::from("type")).and_then(Value::as_str), Some("ss"));
-        assert_eq!(map.get(Value::from("server")).and_then(Value::as_str), Some("ss.example.com"));
-        assert_eq!(map.get(Value::from("cipher")).and_then(Value::as_str), Some("aes-256-gcm"));
-        assert_eq!(map.get(Value::from("password")).and_then(Value::as_str), Some("password"));
+        assert_eq!(
+            map.get(Value::from("type")).and_then(Value::as_str),
+            Some("ss")
+        );
+        assert_eq!(
+            map.get(Value::from("server")).and_then(Value::as_str),
+            Some("ss.example.com")
+        );
+        assert_eq!(
+            map.get(Value::from("cipher")).and_then(Value::as_str),
+            Some("aes-256-gcm")
+        );
+        assert_eq!(
+            map.get(Value::from("password")).and_then(Value::as_str),
+            Some("password")
+        );
     }
 
     #[test]
@@ -472,8 +499,16 @@ mod tests {
         assert_eq!(config.proxies.len(), 1);
         let proxy = config.proxies.first().expect("proxy");
         let map = proxy.as_mapping().expect("mapping");
-        assert_eq!(map.get(Value::from("server")).and_then(Value::as_str), Some("ss.example.com"));
-        assert_eq!(map.get(Value::from("port")).and_then(Value::as_u64).map(|v| v as u16), Some(8388));
+        assert_eq!(
+            map.get(Value::from("server")).and_then(Value::as_str),
+            Some("ss.example.com")
+        );
+        assert_eq!(
+            map.get(Value::from("port"))
+                .and_then(Value::as_u64)
+                .map(|v| v as u16),
+            Some(8388)
+        );
     }
 
     #[test]

@@ -233,7 +233,10 @@ mod tests {
             ..Default::default()
         };
 
-        let sub = ClashConfig { port: Some(8888), ..Default::default() };
+        let sub = ClashConfig {
+            port: Some(8888),
+            ..Default::default()
+        };
 
         let merged = merge_configs(template, vec![sub]);
         assert_eq!(merged.port, Some(7890));
@@ -278,9 +281,15 @@ mod tests {
 
     #[test]
     fn test_merge_rules_append() {
-        let template = ClashConfig { rules: vec!["RULE,TEMPLATE".to_string()], ..Default::default() };
+        let template = ClashConfig {
+            rules: vec!["RULE,TEMPLATE".to_string()],
+            ..Default::default()
+        };
 
-        let sub = ClashConfig { rules: vec!["RULE,SUB".to_string()], ..Default::default() };
+        let sub = ClashConfig {
+            rules: vec!["RULE,SUB".to_string()],
+            ..Default::default()
+        };
 
         let merged = merge_configs(template, vec![sub]);
         assert_eq!(merged.rules, vec!["RULE,TEMPLATE", "RULE,SUB"]);
@@ -360,7 +369,11 @@ mod tests {
         let mut base = ClashConfig::default();
         base.extra.insert("mixed-port".into(), Value::from(7890));
 
-        let merged = ClashConfig { port: Some(8080), socks_port: Some(8081), ..Default::default() };
+        let merged = ClashConfig {
+            port: Some(8080),
+            socks_port: Some(8081),
+            ..Default::default()
+        };
 
         let result = apply_base_config(merged, &base);
         // Legacy ports should be cleared when mixed-port is present
