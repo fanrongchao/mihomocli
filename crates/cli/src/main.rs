@@ -634,27 +634,34 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
 
-                    // Route Kubernetes cluster DNS to kube-dns instead of public resolvers.
-                    // This avoids fake-ip responses and ensures service discovery works when
-                    // tun dns-hijack intercepts pod DNS traffic.
-                    let policy_key = Value::String("nameserver-policy".to_string());
-                    let policy_value = dns_map
-                        .entry(policy_key)
-                        .or_insert_with(|| Value::Mapping(Mapping::new()));
-                    if let Value::Mapping(policy_map) = policy_value {
-                        let k8s_key = Value::String("+.cluster.local".to_string());
-                        if !policy_map.contains_key(&k8s_key) {
-                            policy_map.insert(
-                                k8s_key,
-                                Value::Sequence(vec![Value::String("10.43.0.10".to_string())]),
-                            );
-                            info!(
-                                domain = "+.cluster.local",
-                                server = "10.43.0.10",
-                                "auto-added nameserver-policy"
-                            );
-                        }
+    // Avoid hijacking Kubernetes pod/service CIDRs in tun mode.
+    // This keeps in-cluster traffic (including DNS to kube-dns) out of the tun
+    // device so service discovery remains stable.
+    {
+        use serde_yaml::{Mapping, Value};
+
+        let tun_value = merged
+            .extra
+            .entry("tun".to_string())
+            .or_insert_with(|| Value::Mapping(Mapping::new()));
+
+        if let Value::Mapping(tun_map) = tun_value {
+            let key = Value::String("route-exclude-address".to_string());
+            let seq_value = tun_map
+                .entry(key)
+                .or_insert_with(|| Value::Sequence(Vec::new()));
+
+            if let Value::Sequence(seq) = seq_value {
+                for cidr in ["10.42.0.0/16", "10.43.0.0/16"] {
+                    let exists = seq.iter().any(|v| v.as_str() == Some(cidr));
+                    if !exists {
+                        seq.push(Value::String(cidr.to_string()));
+                        info!(value = %cidr, "auto-added tun route-exclude-address");
                     }
                 }
             }
