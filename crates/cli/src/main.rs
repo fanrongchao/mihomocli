@@ -975,6 +975,27 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn attach_group_appends_without_duplicates() {
+        use serde_yaml::Value;
+
+        let mut groups: Vec<Value> = vec![serde_yaml::from_str(
+            "name: \"BosLife\"\ntype: select\nproxies:\n  - A\n  - B\n",
+        )
+        .unwrap()];
+
+        let names = vec!["B".to_string(), "jp-vultr".to_string()];
+        assert!(attach_proxy_names_to_group(&mut groups, "BosLife", &names));
+
+        let map = groups[0].as_mapping().unwrap();
+        let seq = map
+            .get(&Value::from("proxies"))
+            .and_then(|v| v.as_sequence())
+            .unwrap();
+        let items: Vec<_> = seq.iter().filter_map(|v| v.as_str()).collect();
+        assert_eq!(items, vec!["A", "B", "jp-vultr"]);
+    }
 }
 
 fn default_base_config_path(paths: &AppPaths) -> Option<PathBuf> {
@@ -1289,6 +1310,10 @@ struct ServerAddArgs {
     /// Add the entry disabled (won't be injected during merge)
     #[arg(long, default_value_t = false)]
     disabled: bool,
+
+    /// Append injected proxy names into the specified proxy-group(s) (repeatable)
+    #[arg(long = "attach-group")]
+    attach_groups: Vec<String>,
 }
 
 #[derive(Args)]
@@ -1438,6 +1463,7 @@ async fn manage_server(paths: &AppPaths, cmd: ServerCmd) -> anyhow::Result<()> {
             let entry = ManualServerRef {
                 name: args.name.clone(),
                 file: args.file.clone(),
+                attach_groups: args.attach_groups.clone(),
                 enabled: !args.disabled,
             };
 
@@ -1533,6 +1559,7 @@ async fn inject_manual_servers(
             continue;
         };
 
+        let mut injected_names: Vec<String> = Vec::new();
         for mut proxy in cfg.proxies.into_iter() {
             // Ensure proxy is a mapping and has a unique name.
             let orig_name = proxy_name(&proxy).unwrap_or_else(|| s.name.clone());
@@ -1543,11 +1570,69 @@ async fn inject_manual_servers(
             set_proxy_name(&mut proxy, &unique);
 
             merged.proxies.push(proxy);
+            injected_names.push(unique);
             added += 1;
+        }
+
+        if !injected_names.is_empty() && !s.attach_groups.is_empty() {
+            for group in &s.attach_groups {
+                let ok =
+                    attach_proxy_names_to_group(&mut merged.proxy_groups, group, &injected_names);
+                if ok {
+                    info!(group = %group, added = injected_names.len(), "attached manual proxies to group");
+                } else {
+                    warn!(group = %group, "requested attach-group not found; skipping");
+                }
+            }
         }
     }
 
     Ok(added)
+}
+
+fn attach_proxy_names_to_group(
+    groups: &mut [serde_yaml::Value],
+    group_name: &str,
+    proxy_names: &[String],
+) -> bool {
+    use serde_yaml::Value;
+
+    for g in groups.iter_mut() {
+        let Value::Mapping(map) = g else {
+            continue;
+        };
+        let name = map
+            .get(Value::from("name"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if name != group_name {
+            continue;
+        }
+
+        let proxies_key = Value::from("proxies");
+        let entry = map
+            .entry(proxies_key)
+            .or_insert_with(|| Value::Sequence(Vec::new()));
+        if !matches!(entry, Value::Sequence(_)) {
+            *entry = Value::Sequence(Vec::new());
+        }
+
+        let Value::Sequence(seq) = entry else {
+            return true;
+        };
+        let mut set: HashSet<String> = seq
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+        for n in proxy_names {
+            if set.insert(n.clone()) {
+                seq.push(Value::from(n.as_str()));
+            }
+        }
+        return true;
+    }
+
+    false
 }
 
 fn proxy_name(value: &serde_yaml::Value) -> Option<String> {

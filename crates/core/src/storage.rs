@@ -142,6 +142,9 @@ pub struct AppConfig {
 pub struct ManualServerRef {
     pub name: String,
     pub file: PathBuf,
+    /// Optional proxy-groups to append the injected proxy names into (e.g., a provider selector).
+    #[serde(default)]
+    pub attach_groups: Vec<String>,
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
@@ -362,6 +365,7 @@ mod tests {
             manual_servers: vec![ManualServerRef {
                 name: "jp-vultr".to_string(),
                 file: PathBuf::from("/run/secrets/manual_share_links"),
+                attach_groups: vec!["BosLife".to_string()],
                 enabled: true,
             }],
         };
