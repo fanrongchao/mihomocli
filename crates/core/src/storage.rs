@@ -129,6 +129,25 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub custom_rules: Vec<CustomRule>,
+
+    /// Manually-managed server sources (references to local files containing share links).
+    ///
+    /// This is intentionally a file reference so secrets (trojan passwords, etc.) do not need to
+    /// live inside app.yaml.
+    #[serde(default)]
+    pub manual_servers: Vec<ManualServerRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ManualServerRef {
+    pub name: String,
+    pub file: PathBuf,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -323,6 +342,7 @@ mod tests {
         let config = load_app_config(&paths).await.unwrap();
         assert_eq!(config.last_subscription_url, None);
         assert_eq!(config.custom_rules.len(), 0);
+        assert_eq!(config.manual_servers.len(), 0);
 
         // Test saving and loading with data
         let new_config = AppConfig {
@@ -339,6 +359,11 @@ mod tests {
                     via: "DIRECT".to_string(),
                 },
             ],
+            manual_servers: vec![ManualServerRef {
+                name: "jp-vultr".to_string(),
+                file: PathBuf::from("/run/secrets/manual_share_links"),
+                enabled: true,
+            }],
         };
 
         save_app_config(&paths, &new_config).await.unwrap();
@@ -352,6 +377,18 @@ mod tests {
         assert_eq!(loaded.custom_rules[0].domain, "example.com");
         assert_eq!(loaded.custom_rules[0].kind, RuleKind::Domain);
         assert_eq!(loaded.custom_rules[1].kind, RuleKind::DomainSuffix);
+        assert_eq!(loaded.manual_servers.len(), 1);
+        assert_eq!(loaded.manual_servers[0].name, "jp-vultr");
+    }
+
+    #[tokio::test]
+    async fn test_manual_server_default_enabled() {
+        let yaml = r#"
+name: jp
+file: /run/secrets/jp
+"#;
+        let s: ManualServerRef = serde_yaml::from_str(yaml).unwrap();
+        assert!(s.enabled);
     }
 
     #[tokio::test]

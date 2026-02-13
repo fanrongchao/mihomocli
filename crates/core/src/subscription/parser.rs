@@ -61,6 +61,14 @@ pub fn parse_subscription_payload_with_options(
     ))
 }
 
+/// Parse a plain-text list of share links (trojan/vmess/ss), one per line.
+///
+/// Unlike `parse_subscription_payload_with_options`, this does not attempt YAML parsing or base64
+/// decoding; it is intended for manual server lists where secrets live in a referenced file.
+pub fn parse_share_links_payload(input: &str) -> anyhow::Result<Option<ClashConfig>> {
+    parse_share_links(input)
+}
+
 fn decode_candidates(raw: &str) -> Vec<String> {
     let filtered: String = raw.chars().filter(|c| !c.is_ascii_whitespace()).collect();
     if filtered.is_empty() {

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Context};
 use clap::{Args, Parser, Subcommand};
 use mihomo_core::output::{ConfigDeployer, FileDeployer};
-use mihomo_core::storage::{self, AppPaths, CustomRule, RuleKind, SubscriptionList};
+use mihomo_core::storage::{self, AppPaths, CustomRule, ManualServerRef, RuleKind, SubscriptionList};
 use mihomo_core::subscription::{Subscription, SubscriptionKind};
 use mihomo_core::{merge_configs, Template};
 use tokio::fs;
@@ -439,6 +439,16 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
     }
 
     let mut merged = merge_configs(template, configs);
+
+    // Inject manually-managed proxies (e.g. a private trojan server) before applying base-config,
+    // so that base-config group rebuild sees all proxy names.
+    if !app_cfg.manual_servers.is_empty() {
+        let added = inject_manual_servers(&mut merged, &app_cfg).await?;
+        if added > 0 {
+            info!(added = added, "injected manual server proxies");
+        }
+    }
+
     if let Some(base) = base_config.as_ref() {
         merged = mihomo_core::merge::apply_base_config(merged, base);
     }
@@ -794,6 +804,7 @@ fn print_merge_summary(
         dev_via.unwrap_or("<n/a>"),
         if args.dev_rules { dev_added } else { 0 }
     );
+    println!("- manual-servers: <see app.yaml> (not shown in dry-run summary)");
     println!(
         "- external-controller: {}, secret={}",
         ext_ctrl.unwrap_or_else(|| "<unset>".into()),
@@ -906,6 +917,10 @@ const DEV_RULE_TARGETS: &[(&str, &str)] = &[
     // AI APIs
     ("DOMAIN-SUFFIX", "api.openai.com"),
     ("DOMAIN-SUFFIX", "claude.ai"),
+    ("DOMAIN-SUFFIX", "platform.claude.com"),
+    ("DOMAIN-SUFFIX", "anthropic.com"),
+    ("DOMAIN-SUFFIX", "openai.com"),
+    ("DOMAIN-SUFFIX", "chatgpt.com"),
 ];
 
 fn build_dev_rules(via: &str) -> Vec<String> {
@@ -947,6 +962,10 @@ mod tests {
             "DOMAIN-SUFFIX,k3s.io,",
             "DOMAIN-SUFFIX,api.openai.com,",
             "DOMAIN-SUFFIX,claude.ai,",
+            "DOMAIN-SUFFIX,platform.claude.com,",
+            "DOMAIN-SUFFIX,anthropic.com,",
+            "DOMAIN-SUFFIX,openai.com,",
+            "DOMAIN-SUFFIX,chatgpt.com,",
             "DOMAIN,cache.nixos.org,",
             "DOMAIN-SUFFIX,dl.k8s.io,",
         ] {
@@ -1189,6 +1208,13 @@ Tips
 "#
     )]
     DevList(DevListArgs),
+
+    /// Manage manually-added server sources (file references with share links)
+    #[command(about = "Manage manual server sources")]
+    Server {
+        #[command(subcommand)]
+        command: ServerCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1239,6 +1265,39 @@ struct CheckArgs {
     domain: String,
 }
 
+#[derive(Subcommand)]
+enum ServerCmd {
+    /// Add or update a manual server source (a file with share links)
+    Add(ServerAddArgs),
+    /// List manual server sources
+    List,
+    /// Remove a manual server source by name
+    Remove(ServerRemoveArgs),
+}
+
+#[derive(Args)]
+struct ServerAddArgs {
+    /// Unique name for this manual server source (e.g., jp-vultr)
+    #[arg(long)]
+    name: String,
+    /// Path to a local file containing share links (trojan/vmess/ss), one per line
+    #[arg(long)]
+    file: PathBuf,
+    /// Replace existing entry with the same name
+    #[arg(long, default_value_t = false)]
+    replace: bool,
+    /// Add the entry disabled (won't be injected during merge)
+    #[arg(long, default_value_t = false)]
+    disabled: bool,
+}
+
+#[derive(Args)]
+struct ServerRemoveArgs {
+    /// Name to remove
+    #[arg(long)]
+    name: String,
+}
+
 async fn run_manage(cmd: Manage) -> anyhow::Result<()> {
     let paths = AppPaths::new()?;
     paths.ensure_runtime_dirs().await?;
@@ -1247,6 +1306,7 @@ async fn run_manage(cmd: Manage) -> anyhow::Result<()> {
         Manage::Custom(c) => manage_custom(&paths, c).await,
         Manage::Check(c) => manage_check(&paths, c).await,
         Manage::DevList(args) => manage_dev_list(args).await,
+        Manage::Server { command } => manage_server(&paths, command).await,
     }
 }
 
@@ -1366,6 +1426,64 @@ async fn manage_check(paths: &AppPaths, args: CheckArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn manage_server(paths: &AppPaths, cmd: ServerCmd) -> anyhow::Result<()> {
+    let mut cfg = storage::load_app_config(paths).await?;
+    match cmd {
+        ServerCmd::Add(args) => {
+            // Validate file exists and is readable (do not read its contents here to avoid leaks).
+            if !fs::try_exists(&args.file).await.unwrap_or(false) {
+                return Err(anyhow!("manual server file does not exist: {}", args.file.display()));
+            }
+
+            let entry = ManualServerRef {
+                name: args.name.clone(),
+                file: args.file.clone(),
+                enabled: !args.disabled,
+            };
+
+            if let Some(existing) = cfg
+                .manual_servers
+                .iter_mut()
+                .find(|s| s.name == args.name)
+            {
+                if args.replace {
+                    *existing = entry;
+                    storage::save_app_config(paths, &cfg).await?;
+                    println!("manual server updated");
+                } else {
+                    println!("manual server already exists (use --replace to update)");
+                }
+            } else {
+                cfg.manual_servers.push(entry);
+                storage::save_app_config(paths, &cfg).await?;
+                println!("manual server added");
+            }
+        }
+        ServerCmd::List => {
+            if cfg.manual_servers.is_empty() {
+                println!("<no manual servers>");
+            } else {
+                for s in &cfg.manual_servers {
+                    println!(
+                        "{}\t{}\tenabled={}",
+                        s.name,
+                        s.file.display(),
+                        if s.enabled { "true" } else { "false" }
+                    );
+                }
+            }
+        }
+        ServerCmd::Remove(args) => {
+            let before = cfg.manual_servers.len();
+            cfg.manual_servers.retain(|s| s.name != args.name);
+            let after = cfg.manual_servers.len();
+            storage::save_app_config(paths, &cfg).await?;
+            println!("removed {} manual server(s)", before.saturating_sub(after));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Args)]
 struct DevListArgs {
     /// Output format: plain|yaml|json (default: plain)
@@ -1396,4 +1514,74 @@ async fn manage_dev_list(args: DevListArgs) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+async fn inject_manual_servers(
+    merged: &mut mihomo_core::ClashConfig,
+    app_cfg: &mihomo_core::storage::AppConfig,
+) -> anyhow::Result<usize> {
+    let mut existing: HashSet<String> = merged.proxy_names().into_iter().collect();
+    let mut added = 0usize;
+
+    for s in app_cfg.manual_servers.iter().filter(|s| s.enabled) {
+        let raw = fs::read_to_string(&s.file)
+            .await
+            .with_context(|| format!("failed to read manual server file {}", s.file.display()))?;
+
+        let Some(cfg) = mihomo_core::subscription::parse_share_links_payload(&raw)? else {
+            warn!(name = %s.name, file = %s.file.display(), "manual server file contains no supported share links");
+            continue;
+        };
+
+        for mut proxy in cfg.proxies.into_iter() {
+            // Ensure proxy is a mapping and has a unique name.
+            let orig_name = proxy_name(&proxy).unwrap_or_else(|| s.name.clone());
+            let unique = unique_proxy_name(&orig_name, &mut existing);
+            if unique != orig_name {
+                warn!(from = %orig_name, to = %unique, "manual proxy name collision; renamed");
+            }
+            set_proxy_name(&mut proxy, &unique);
+
+            merged.proxies.push(proxy);
+            added += 1;
+        }
+    }
+
+    Ok(added)
+}
+
+fn proxy_name(value: &serde_yaml::Value) -> Option<String> {
+    use serde_yaml::Value;
+    match value {
+        Value::Mapping(map) => map
+            .get(Value::from("name"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        _ => None,
+    }
+}
+
+fn set_proxy_name(value: &mut serde_yaml::Value, name: &str) {
+    use serde_yaml::Value;
+    if let Value::Mapping(map) = value {
+        map.insert(Value::from("name"), Value::from(name));
+    }
+}
+
+fn unique_proxy_name(base: &str, existing: &mut HashSet<String>) -> String {
+    if existing.insert(base.to_string()) {
+        return base.to_string();
+    }
+    let mut i = 1usize;
+    loop {
+        let candidate = if i == 1 {
+            format!("{base} (manual)")
+        } else {
+            format!("{base} (manual {i})")
+        };
+        if existing.insert(candidate.clone()) {
+            return candidate;
+        }
+        i += 1;
+    }
 }

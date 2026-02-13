@@ -12,7 +12,7 @@ use tokio::fs;
 use tracing::Instrument;
 
 mod parser;
-pub use parser::ParseOptions;
+pub use parser::{parse_share_links_payload, ParseOptions};
 
 use crate::model::ClashConfig;
 use crate::storage::AppPaths;
