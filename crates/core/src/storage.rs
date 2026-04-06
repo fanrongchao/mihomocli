@@ -17,8 +17,17 @@ pub struct AppPaths {
 impl AppPaths {
     pub fn new() -> anyhow::Result<Self> {
         let base = BaseDirs::new().ok_or_else(|| anyhow!("failed to resolve base directories"))?;
-        let config_dir = base.home_dir().join(".config/mihomocli");
-        let cache_dir = base.home_dir().join(".cache/mihomocli/subscriptions");
+        let (config_dir, cache_dir) = if cfg!(target_os = "windows") {
+            (
+                base.config_dir().join("mihomocli"),
+                base.cache_dir().join("mihomocli/subscriptions"),
+            )
+        } else {
+            (
+                base.home_dir().join(".config/mihomocli"),
+                base.home_dir().join(".cache/mihomocli/subscriptions"),
+            )
+        };
         Ok(Self {
             config_dir,
             cache_dir,
@@ -85,13 +94,7 @@ impl AppPaths {
     }
 
     pub fn clash_verge_dir_candidates(&self) -> Vec<PathBuf> {
-        let home = self
-            .config_dir
-            .parent()
-            .and_then(|p| p.parent())
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("/"));
-
+        let home = self.home_dir_fallback();
         let mut candidates = Vec::new();
 
         if cfg!(target_os = "macos") {
@@ -115,6 +118,26 @@ impl AppPaths {
         }
 
         candidates
+    }
+
+    fn home_dir_fallback(&self) -> PathBuf {
+        if cfg!(target_os = "windows") {
+            env::var_os("USERPROFILE")
+                .map(PathBuf::from)
+                .or_else(|| {
+                    env::var_os("HOMEDRIVE").and_then(|drive| {
+                        env::var_os("HOMEPATH")
+                            .map(|path| PathBuf::from(drive).join(PathBuf::from(path)))
+                    })
+                })
+                .unwrap_or_else(|| PathBuf::from("C:/"))
+        } else {
+            self.config_dir
+                .parent()
+                .and_then(|p| p.parent())
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| PathBuf::from("/"))
+        }
     }
 
     pub fn detect_clash_verge_dir(&self) -> Option<PathBuf> {
@@ -340,6 +363,14 @@ mod tests {
             paths.cache_meta_file("test-id"),
             temp_dir.path().join("cache/test-id.meta.json")
         );
+    }
+
+    #[test]
+    fn home_dir_fallback_uses_config_parent_on_unix_layout() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = create_test_paths(&temp_dir);
+
+        assert_eq!(paths.home_dir_fallback(), temp_dir.path().to_path_buf());
     }
 
     #[tokio::test]

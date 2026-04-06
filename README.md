@@ -16,6 +16,14 @@ Tip: Use the Nix dev shell for a pinned Rust toolchain. Either enter an interact
 
 If you use `direnv`/`nix-direnv`, keep your own local hook if you want automatic shell activation. The checked-in workflow here stays centered on `nix develop -c ...`.
 
+Windows does not need Nix. The intended flow there is plain Cargo or a shipped `mihomo-cli.exe`:
+
+```powershell
+cargo build --release -p mihomo-cli
+.\target\release\mihomo-cli.exe doctor
+.\target\release\mihomo-cli.exe refresh-clash-verge
+```
+
 ```
 nix develop
 ```
@@ -167,6 +175,12 @@ Notes:
 - `mihomo-cli runtime mode <rule|global|direct>`: update local runtime files, keep Clash Verge's `profiles/Merge.yaml` aligned where available, and reload the controller
 
 This keeps file state and process state together, which is especially useful when we want Clash Verge to degrade into "subscription fetch + tray shell" rather than the authoritative control plane.
+
+For Windows, the preparatory pieces are now in place:
+- `AppPaths` uses native Windows config/cache roots for `mihomocli`
+- Clash Verge path detection probes `%APPDATA%` and `%LOCALAPPDATA%`
+- `doctor` reads WinINET proxy settings from the registry
+- `runtime` is prepared to rely on the local HTTP controller instead of a unix socket
 
 ### Fake‑IP Modes and Bypass
 

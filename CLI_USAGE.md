@@ -20,6 +20,19 @@ nix develop -c cargo clippy --all-targets --all-features
 
 If you use `direnv`/`nix-direnv` locally, keep your own allowlist and shell hook as preferred. The project no longer relies on a checked-in `.envrc`; the canonical entrypoint remains `nix develop -c ...`.
 
+Windows note:
+
+```powershell
+cargo build --release -p mihomo-cli
+.\target\release\mihomo-cli.exe doctor
+.\target\release\mihomo-cli.exe refresh-clash-verge
+```
+
+Windows is expected to run without Nix. The CLI now prepares for that by:
+- using native Windows config/cache roots for `mihomocli`
+- probing Clash Verge under `%APPDATA%` / `%LOCALAPPDATA%`
+- reading WinINET system proxy state from the registry in `doctor`
+
 ## Command Overview
 
 Get top-level help and per-command details directly from the binary:
@@ -95,7 +108,7 @@ mihomo-cli doctor
 What it reports:
 - local Clash Verge runtime file state (`mode`, `tun`, `sniffer`, fake-ip range, route excludes)
 - whether `config.yaml` and `clash-verge.yaml` currently agree on the important runtime fields
-- macOS system proxy status via `scutil --proxy`
+- system proxy status via `scutil --proxy` on macOS or WinINET registry keys on Windows
 - Tailscale CLI status and health warnings when available
 - controller connectivity and a live connection sample when the Mihomo controller is reachable
 
@@ -128,6 +141,8 @@ Available actions:
 - `mihomo-cli runtime status`: Show the detected runtime files, current `mode`, `tun`, `sniffer`, whether `config.yaml` and `clash-verge.yaml` are aligned, the source `profiles/Merge.yaml` mode, and the live controller summary when reachable.
 - `mihomo-cli runtime reload`: Ask the controller to reload from the detected runtime file, using the same `config.yaml`/`clash-verge.yaml` that `refresh-clash-verge` writes.
 - `mihomo-cli runtime mode <rule|global|direct>`: Update the detected runtime files to the target mode, also keep `profiles/Merge.yaml` aligned where available, then reload the controller.
+
+On Windows, `runtime` is designed to work without a unix socket. It will use the local HTTP `external-controller` that Clash Verge exports.
 
 Examples:
 

@@ -1215,11 +1215,20 @@ fn runtime_summary_core_eq(left: &RuntimeSummary, right: &RuntimeSummary) -> boo
 fn print_system_proxy_summary() {
     println!("System proxy:");
 
-    if !cfg!(target_os = "macos") {
-        println!("  status: unsupported on this platform");
+    if cfg!(target_os = "macos") {
+        print_macos_system_proxy_summary();
         return;
     }
 
+    if cfg!(target_os = "windows") {
+        print_windows_system_proxy_summary();
+        return;
+    }
+
+    println!("  status: unsupported on this platform");
+}
+
+fn print_macos_system_proxy_summary() {
     match std::process::Command::new("scutil").arg("--proxy").output() {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1244,6 +1253,115 @@ fn print_system_proxy_summary() {
             println!("  status: unavailable ({err})");
         }
     }
+}
+
+fn print_windows_system_proxy_summary() {
+    let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings";
+    let enable_output = std::process::Command::new("reg")
+        .args(["query", key, "/v", "ProxyEnable"])
+        .output();
+    let server_output = std::process::Command::new("reg")
+        .args(["query", key, "/v", "ProxyServer"])
+        .output();
+
+    match (enable_output, server_output) {
+        (Ok(enable), Ok(server)) if enable.status.success() && server.status.success() => {
+            let enable_raw = String::from_utf8_lossy(&enable.stdout);
+            let server_raw = String::from_utf8_lossy(&server.stdout);
+            let proxies = parse_windows_proxy_query(&enable_raw, &server_raw);
+            if proxies.is_empty() {
+                println!("  status: reg query reports no enabled system proxies");
+            } else {
+                println!("  status: enabled");
+                for proxy in proxies {
+                    println!("  {} -> {}:{}", proxy.kind, proxy.host, proxy.port);
+                }
+            }
+        }
+        (Ok(enable), Ok(server)) => {
+            let stderr = format!(
+                "{} {}",
+                String::from_utf8_lossy(&enable.stderr),
+                String::from_utf8_lossy(&server.stderr)
+            );
+            println!(
+                "  status: unavailable ({})",
+                trimmed_single_line(&stderr).unwrap_or_else(|| "reg query failed".to_string())
+            );
+        }
+        (Err(err), _) | (_, Err(err)) => {
+            println!("  status: unavailable ({err})");
+        }
+    }
+}
+
+fn parse_windows_proxy_query(enable_raw: &str, server_raw: &str) -> Vec<ProxyEntry> {
+    let enabled = enable_raw
+        .lines()
+        .find(|line| line.contains("ProxyEnable"))
+        .map(|line| {
+            let normalized = line.trim().to_ascii_lowercase();
+            normalized.ends_with("0x1") || normalized.ends_with("0x00000001")
+        })
+        .unwrap_or(false);
+
+    if !enabled {
+        return Vec::new();
+    }
+
+    let Some(server_value) = server_raw
+        .lines()
+        .find(|line| line.contains("ProxyServer"))
+        .and_then(|line| line.split("REG_SZ").nth(1))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Vec::new();
+    };
+
+    let mut proxies = Vec::new();
+    if server_value.contains('=') {
+        for item in server_value.split(';').filter(|item| !item.is_empty()) {
+            let mut parts = item.splitn(2, '=');
+            let Some(kind) = parts.next().map(str::trim) else {
+                continue;
+            };
+            let Some(target) = parts.next().map(str::trim) else {
+                continue;
+            };
+            if let Some((host, port)) = split_host_port(target) {
+                let label = match kind.to_ascii_lowercase().as_str() {
+                    "http" => "HTTP",
+                    "https" => "HTTPS",
+                    "socks" | "socks5" => "SOCKS",
+                    _ => "WININET",
+                };
+                proxies.push(ProxyEntry {
+                    kind: label,
+                    host,
+                    port,
+                });
+            }
+        }
+    } else if let Some((host, port)) = split_host_port(server_value) {
+        proxies.push(ProxyEntry {
+            kind: "WININET",
+            host,
+            port,
+        });
+    }
+
+    proxies
+}
+
+fn split_host_port(raw: &str) -> Option<(String, String)> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    let (host, port) = value.rsplit_once(':')?;
+    Some((host.trim().to_string(), port.trim().to_string()))
 }
 
 fn parse_scutil_proxy(output: &str) -> Vec<ProxyEntry> {
@@ -3016,6 +3134,42 @@ mod tests {
         assert_eq!(entries[0].kind, "HTTP");
         assert_eq!(entries[1].kind, "HTTPS");
         assert_eq!(entries[2].kind, "SOCKS");
+    }
+
+    #[test]
+    fn parse_windows_proxy_query_detects_per_protocol_entries() {
+        let enable = r#"
+HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Internet Settings
+    ProxyEnable    REG_DWORD    0x1
+"#;
+        let server = r#"
+HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Internet Settings
+    ProxyServer    REG_SZ    http=127.0.0.1:7897;https=127.0.0.1:7897;socks=127.0.0.1:7897
+"#;
+
+        let entries = parse_windows_proxy_query(enable, server);
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].kind, "HTTP");
+        assert_eq!(entries[1].kind, "HTTPS");
+        assert_eq!(entries[2].kind, "SOCKS");
+    }
+
+    #[test]
+    fn parse_windows_proxy_query_detects_single_wininet_proxy() {
+        let enable = r#"
+HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Internet Settings
+    ProxyEnable    REG_DWORD    0x00000001
+"#;
+        let server = r#"
+HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Internet Settings
+    ProxyServer    REG_SZ    127.0.0.1:7897
+"#;
+
+        let entries = parse_windows_proxy_query(enable, server);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, "WININET");
+        assert_eq!(entries[0].host, "127.0.0.1");
+        assert_eq!(entries[0].port, "7897");
     }
 
     #[test]
