@@ -1,5 +1,6 @@
 target/
 .cargo/
+.direnv/
 out_*.yaml
 cli_output*.yaml
 .tmp_resources/
