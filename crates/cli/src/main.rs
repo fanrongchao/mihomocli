@@ -2969,9 +2969,9 @@ rules:
 
         apply_tailscale_compatibility(&mut cfg, &[String::from("zhsjf.cn")], &[]);
 
-        assert_eq!(cfg.rules[0], "DOMAIN-SUFFIX,tailscale.com,DIRECT");
-        assert_eq!(cfg.rules[1], "DOMAIN-SUFFIX,ts.net,DIRECT");
-        assert_eq!(cfg.rules[2], "DOMAIN-SUFFIX,tail.zhsjf.cn,DIRECT");
+        assert_eq!(cfg.rules[0], "DOMAIN-SUFFIX,tail.zhsjf.cn,DIRECT");
+        assert_eq!(cfg.rules[1], "DOMAIN-SUFFIX,tailscale.com,DIRECT");
+        assert_eq!(cfg.rules[2], "DOMAIN-SUFFIX,ts.net,DIRECT");
         assert_eq!(cfg.rules[3], "MATCH,Proxy");
     }
 
