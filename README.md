@@ -14,7 +14,7 @@
 ## Quick Start
 Tip: Use the Nix dev shell for a pinned Rust toolchain. Either enter an interactive shell or invoke Cargo via `nix develop -c`.
 
-This repo also ships an [`.envrc`](/Users/frc/code/mihomocli/.envrc) for `direnv`/`nix-direnv`, so on this machine you can simply run `direnv allow` once and then rely on the local project environment automatically.
+If you use `direnv`/`nix-direnv`, keep your own local hook if you want automatic shell activation. The checked-in workflow here stays centered on `nix develop -c ...`.
 
 ```
 nix develop
@@ -23,11 +23,6 @@ nix develop
 ```bash
 # Initialize runtime directories and seed default template
 mihomo-cli init
-```
-
-```bash
-# One-time setup for automatic local env loading
-direnv allow
 ```
 
 ```bash
@@ -56,6 +51,10 @@ mihomo-cli merge \
 
 # Practical daily flow after clicking refresh in Clash Verge:
 nix develop -c cargo run -p mihomo-cli -- refresh-clash-verge
+
+# Inspect or change the live local runtime without opening the GUI:
+nix develop -c cargo run -p mihomo-cli -- runtime status
+nix develop -c cargo run -p mihomo-cli -- runtime mode rule
 ```
 
 ## End-to-End Test (UA feature)
@@ -158,6 +157,16 @@ Notes:
 - `--no-dev-rules [--dev-rules-via <NAME>]`: Dev rules are enabled by default and prepend proxy rules for common developer registries and slow infra endpoints (GitHub/GitLab, npm/yarn, PyPI, crates.io, Go proxy, Vultr, Docker/GCR, `cache.nixos.org`, `channels.nixos.org`, `cachix.org`, AI agent APIs such as OpenAI/Claude/Gemini/Cursor/OpenRouter, etc.). Override the target group with `--dev-rules-via` or disable via `--no-dev-rules`. If the requested group `Proxy` is not present in the merged config, the CLI falls back to an existing group (preferring `🚀 节点选择`), otherwise the first group, then the first proxy, and finally `DIRECT`.
 - `--dev-rules-show`: Print the generated dev rule list (useful for inspection without modifying output).
 - External controller settings: `--external-controller-url <HOST>`, `--external-controller-port <PORT>`, and `--external-controller-secret <SECRET>` to set `external-controller` and `secret` in the merged output.
+
+### Runtime management
+
+`mihomo-cli runtime` is the GUI-free companion to `refresh-clash-verge`:
+
+- `mihomo-cli runtime status`: show detected runtime files, current mode/tun/sniffer state, and live controller status when reachable
+- `mihomo-cli runtime reload`: reload the running Mihomo instance from the synced runtime file
+- `mihomo-cli runtime mode <rule|global|direct>`: update local runtime files, keep Clash Verge's `profiles/Merge.yaml` aligned where available, and reload the controller
+
+This keeps file state and process state together, which is especially useful when we want Clash Verge to degrade into "subscription fetch + tray shell" rather than the authoritative control plane.
 
 ### Fake‑IP Modes and Bypass
 

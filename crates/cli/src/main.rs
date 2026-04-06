@@ -216,6 +216,12 @@ Notes:
     )]
     RefreshClashVerge(RefreshClashVergeArgs),
 
+    #[command(
+        about = "Inspect or mutate the local Mihomo runtime via synced config files and controller reloads",
+        long_about = "Operate on the locally detected Clash Verge / Mihomo runtime without relying on GUI toggles. Runtime actions update the runtime YAML first, keep Clash Verge's Merge profile aligned where possible, and then ask the controller to reload so file state and process state stay together."
+    )]
+    Runtime(RuntimeArgs),
+
     /// Show or manage cached state and quick rules
     #[command(subcommand)]
     Manage(Manage),
@@ -398,6 +404,29 @@ struct RefreshClashVergeArgs {
     dry_run: bool,
 }
 
+#[derive(Args)]
+struct RuntimeArgs {
+    #[command(subcommand)]
+    command: RuntimeCommand,
+}
+
+#[derive(Subcommand)]
+enum RuntimeCommand {
+    /// Show detected runtime config/controller state
+    Status(DoctorArgs),
+    /// Reload the running Mihomo process from the detected runtime file
+    Reload,
+    /// Update the detected runtime files to a specific Clash mode and reload
+    Mode(RuntimeModeArgs),
+}
+
+#[derive(Args)]
+struct RuntimeModeArgs {
+    /// Target Clash mode for the local runtime config.
+    #[arg(value_enum)]
+    mode: ConfigMode,
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 enum ConfigMode {
     Rule,
@@ -441,6 +470,7 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Merge(args) => run_merge(args).await?,
         Commands::RefreshClashVerge(args) => run_refresh_clash_verge(args).await?,
+        Commands::Runtime(args) => run_runtime(args).await?,
         Commands::Manage(cmd) => run_manage(cmd).await?,
         Commands::Test(args) => run_test(args).await?,
         Commands::Init => run_init().await?,
@@ -632,6 +662,112 @@ async fn run_refresh_clash_verge(args: RefreshClashVergeArgs) -> anyhow::Result<
     };
 
     run_merge(merge_args).await
+}
+
+async fn run_runtime(args: RuntimeArgs) -> anyhow::Result<()> {
+    let paths = AppPaths::new()?;
+    paths.ensure_runtime_dirs().await?;
+
+    match args.command {
+        RuntimeCommand::Status(args) => run_runtime_status(&paths, &args).await,
+        RuntimeCommand::Reload => run_runtime_reload(&paths).await,
+        RuntimeCommand::Mode(args) => run_runtime_mode(&paths, args.mode).await,
+    }
+}
+
+async fn run_runtime_status(paths: &AppPaths, args: &DoctorArgs) -> anyhow::Result<()> {
+    let runtime_paths = existing_runtime_paths(paths).await;
+    let runtime_summaries = load_runtime_summaries(&runtime_paths).await;
+
+    println!("mihomo-cli runtime status");
+    println!();
+
+    if runtime_summaries.is_empty() {
+        println!("Runtime files:");
+        println!("  status: no local runtime files detected");
+        return Ok(());
+    }
+
+    println!("Runtime files:");
+    for summary in &runtime_summaries {
+        print_runtime_summary(summary);
+    }
+
+    if runtime_summaries.len() >= 2 {
+        let primary = &runtime_summaries[0];
+        let aligned = runtime_summaries[1..]
+            .iter()
+            .all(|candidate| runtime_summary_core_eq(primary, candidate));
+        println!(
+            "  file-state-aligned: {}",
+            if aligned { "yes" } else { "no" }
+        );
+    }
+
+    if let Some(source_summary) = load_merge_profile_summary(paths).await {
+        println!("Clash Verge source profile:");
+        print_runtime_summary(&source_summary);
+    }
+
+    println!();
+    if let Some(controller) = runtime_summaries
+        .iter()
+        .find_map(|summary| summary.controller.clone())
+    {
+        print_controller_summary(&controller, args);
+    } else {
+        println!("Controller:");
+        println!("  status: unavailable (no controller settings found in local config)");
+    }
+
+    Ok(())
+}
+
+async fn run_runtime_reload(paths: &AppPaths) -> anyhow::Result<()> {
+    let runtime_paths = existing_runtime_paths(paths).await;
+    let primary_path = preferred_runtime_path(&runtime_paths)
+        .ok_or_else(|| anyhow!("no local Clash Verge runtime config was detected"))?;
+    let cfg = load_runtime_config(primary_path).await?;
+
+    reload_clash_verge_runtime(&cfg, &runtime_paths).await?;
+    println!("runtime reload completed from {}", primary_path.display());
+    Ok(())
+}
+
+async fn run_runtime_mode(paths: &AppPaths, mode: ConfigMode) -> anyhow::Result<()> {
+    let runtime_paths = existing_runtime_paths(paths).await;
+    let primary_path = preferred_runtime_path(&runtime_paths)
+        .ok_or_else(|| anyhow!("no local Clash Verge runtime config was detected"))?
+        .clone();
+
+    let mut reload_cfg: Option<mihomo_core::ClashConfig> = None;
+    for path in &runtime_paths {
+        let mut cfg = load_runtime_config(path).await?;
+        apply_mode_override(&mut cfg, mode);
+        fs::write(path, cfg.to_yaml_string()?)
+            .await
+            .with_context(|| format!("failed to write runtime mode to {}", path.display()))?;
+        println!("updated runtime mode in {}", path.display());
+        if *path == primary_path {
+            reload_cfg = Some(cfg);
+        }
+    }
+
+    if let Some(merge_path) = paths.detected_clash_verge_profile_merge_path() {
+        if fs::try_exists(&merge_path).await.unwrap_or(false) {
+            sync_merge_profile_mode(&merge_path, mode).await?;
+        }
+    }
+
+    let reload_cfg = reload_cfg.ok_or_else(|| {
+        anyhow!(
+            "failed to prepare reload config from preferred runtime path {}",
+            primary_path.display()
+        )
+    })?;
+    reload_clash_verge_runtime(&reload_cfg, &runtime_paths).await?;
+    println!("runtime mode is now {}", mode.as_str());
+    Ok(())
 }
 
 async fn detect_current_clash_verge_subscription_url(paths: &AppPaths) -> anyhow::Result<String> {
@@ -902,6 +1038,42 @@ async fn load_runtime_summaries(paths: &[PathBuf]) -> Vec<RuntimeSummary> {
     summaries
 }
 
+async fn load_runtime_config(path: &Path) -> anyhow::Result<mihomo_core::ClashConfig> {
+    let raw = fs::read_to_string(path)
+        .await
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    mihomo_core::ClashConfig::from_yaml_str(&raw)
+        .with_context(|| format!("failed to parse {}", path.display()))
+}
+
+async fn existing_runtime_paths(paths: &AppPaths) -> Vec<PathBuf> {
+    let mut existing = Vec::new();
+    for path in paths.detected_clash_verge_runtime_config_paths() {
+        if fs::try_exists(&path).await.unwrap_or(false) {
+            existing.push(path);
+        }
+    }
+    existing
+}
+
+fn preferred_runtime_path(paths: &[PathBuf]) -> Option<&PathBuf> {
+    paths
+        .iter()
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name == "clash-verge.yaml")
+        })
+        .or_else(|| {
+            paths.iter().find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name == "config.yaml")
+            })
+        })
+        .or_else(|| paths.first())
+}
+
 fn runtime_summary_from_config(path: &Path, cfg: &mihomo_core::ClashConfig) -> RuntimeSummary {
     let mode = cfg
         .extra
@@ -934,6 +1106,32 @@ fn runtime_summary_from_config(path: &Path, cfg: &mihomo_core::ClashConfig) -> R
         rules_count: cfg.rules.len(),
         controller: parse_controller_endpoint(cfg),
     }
+}
+
+async fn load_merge_profile_summary(paths: &AppPaths) -> Option<RuntimeSummary> {
+    let merge_path = paths.detected_clash_verge_profile_merge_path()?;
+    if !fs::try_exists(&merge_path).await.unwrap_or(false) {
+        return None;
+    }
+    let cfg = load_runtime_config(&merge_path).await.ok()?;
+    Some(runtime_summary_from_config(&merge_path, &cfg))
+}
+
+async fn sync_merge_profile_mode(path: &Path, mode: ConfigMode) -> anyhow::Result<()> {
+    let raw = fs::read_to_string(path)
+        .await
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    let mut doc: serde_yaml::Value = serde_yaml::from_str(&raw)
+        .with_context(|| format!("failed to parse {}", path.display()))?;
+    ensure_root_mapping(&mut doc).insert(
+        serde_yaml::Value::String("mode".to_string()),
+        serde_yaml::Value::String(mode.as_str().to_string()),
+    );
+    fs::write(path, serde_yaml::to_string(&doc)?)
+        .await
+        .with_context(|| format!("failed to write {}", path.display()))?;
+    println!("updated source profile mode in {}", path.display());
+    Ok(())
 }
 
 fn parse_controller_endpoint(cfg: &mihomo_core::ClashConfig) -> Option<ControllerEndpoint> {
@@ -3150,6 +3348,29 @@ rules:
     }
 
     #[test]
+    fn preferred_runtime_path_prefers_clash_verge_yaml() {
+        let paths = vec![
+            PathBuf::from("/tmp/clash-verge.yaml"),
+            PathBuf::from("/tmp/config.yaml"),
+        ];
+
+        assert_eq!(
+            preferred_runtime_path(&paths).map(|path| path.as_path()),
+            Some(Path::new("/tmp/clash-verge.yaml"))
+        );
+    }
+
+    #[test]
+    fn preferred_runtime_path_falls_back_to_first_entry() {
+        let paths = vec![PathBuf::from("/tmp/clash-verge.yaml")];
+
+        assert_eq!(
+            preferred_runtime_path(&paths).map(|path| path.as_path()),
+            Some(Path::new("/tmp/clash-verge.yaml"))
+        );
+    }
+
+    #[test]
     fn apply_mode_override_sets_rule_mode() {
         let mut cfg = mihomo_core::ClashConfig::default();
         cfg.extra
@@ -3199,6 +3420,29 @@ sniffer:
         apply_sniffer_preset(&mut cfg, SnifferPreset::Off);
 
         assert!(!cfg.extra.contains_key("sniffer"));
+    }
+
+    #[test]
+    fn ensure_root_mapping_allows_mode_override_in_source_doc() {
+        let mut doc = serde_yaml::from_str::<Value>(
+            r#"
+rules:
+  - MATCH,Proxy
+"#,
+        )
+        .unwrap();
+
+        ensure_root_mapping(&mut doc).insert(
+            Value::String("mode".to_string()),
+            Value::String("rule".to_string()),
+        );
+
+        let root = doc.as_mapping().unwrap();
+        assert_eq!(
+            root.get(Value::String("mode".to_string()))
+                .and_then(Value::as_str),
+            Some("rule")
+        );
     }
 }
 

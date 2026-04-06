@@ -18,7 +18,7 @@ nix develop -c cargo fmt
 nix develop -c cargo clippy --all-targets --all-features
 ```
 
-If you use `direnv`/`nix-direnv` locally, this repo includes an [`.envrc`](/Users/frc/code/mihomocli/.envrc). Run `direnv allow` once, then all project commands will automatically use the flake environment when you `cd` into the repo.
+If you use `direnv`/`nix-direnv` locally, keep your own allowlist and shell hook as preferred. The project no longer relies on a checked-in `.envrc`; the canonical entrypoint remains `nix develop -c ...`.
 
 ## Command Overview
 
@@ -30,6 +30,7 @@ mihomo-cli merge --help
 mihomo-cli init --help
 mihomo-cli doctor --help
 mihomo-cli refresh-clash-verge --help
+mihomo-cli runtime --help
 ```
 
 ### `merge`
@@ -115,6 +116,32 @@ This is especially useful when you want to answer:
 - Are system proxies still enabled?
 - Is the current app session entering Mihomo via `DEFAULT-MIXED` or via TUN?
 
+### `runtime`
+
+Operate on the locally detected Mihomo / Clash Verge runtime without opening the GUI.
+
+```bash
+mihomo-cli runtime status
+```
+
+Available actions:
+- `mihomo-cli runtime status`: Show the detected runtime files, current `mode`, `tun`, `sniffer`, whether `config.yaml` and `clash-verge.yaml` are aligned, the source `profiles/Merge.yaml` mode, and the live controller summary when reachable.
+- `mihomo-cli runtime reload`: Ask the controller to reload from the detected runtime file, using the same `config.yaml`/`clash-verge.yaml` that `refresh-clash-verge` writes.
+- `mihomo-cli runtime mode <rule|global|direct>`: Update the detected runtime files to the target mode, also keep `profiles/Merge.yaml` aligned where available, then reload the controller.
+
+Examples:
+
+```bash
+# See the current runtime/controller state
+mihomo-cli runtime status
+
+# Switch the local desktop runtime to rule mode without opening Clash Verge
+mihomo-cli runtime mode rule
+
+# Reload the currently synced runtime after manual edits
+mihomo-cli runtime reload
+```
+
 ### `refresh-clash-verge`
 
 Refresh the local Clash Verge setup using the currently active remote subscription from Clash Verge itself.
@@ -190,6 +217,17 @@ To explicitly force the common desktop setup of `rule + tun sniffer`:
 
 ```bash
 nix develop -c cargo run -p mihomo-cli -- refresh-clash-verge --mode rule --sniffer-preset tun
+```
+
+After refresh, use `runtime` for GUI-free day-to-day operations:
+
+```bash
+# Inspect runtime state
+nix develop -c cargo run -p mihomo-cli -- runtime status
+
+# Flip modes without touching the GUI
+nix develop -c cargo run -p mihomo-cli -- runtime mode global
+nix develop -c cargo run -p mihomo-cli -- runtime mode rule
 ```
 
 You can also override the subscription URL explicitly:
