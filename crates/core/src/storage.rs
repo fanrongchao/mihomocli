@@ -1,3 +1,4 @@
+use std::env;
 use std::path::{Path, PathBuf};
 
 use anyhow::anyhow;
@@ -52,6 +53,10 @@ impl AppPaths {
         self.config_dir.join("output/config.yaml")
     }
 
+    pub fn generated_clash_verge_path(&self) -> PathBuf {
+        self.config_dir.join("output/clash-verge.yaml")
+    }
+
     pub fn cache_dir(&self) -> &Path {
         &self.cache_dir
     }
@@ -77,6 +82,72 @@ impl AppPaths {
 
     pub fn resource_file<S: AsRef<str>>(&self, name: S) -> PathBuf {
         self.resources_dir().join(name.as_ref())
+    }
+
+    pub fn clash_verge_dir_candidates(&self) -> Vec<PathBuf> {
+        let home = self
+            .config_dir
+            .parent()
+            .and_then(|p| p.parent())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("/"));
+
+        let mut candidates = Vec::new();
+
+        if cfg!(target_os = "macos") {
+            candidates.push(
+                home.join("Library/Application Support/io.github.clash-verge-rev.clash-verge-rev"),
+            );
+        }
+
+        if cfg!(target_os = "windows") {
+            if let Some(appdata) = env::var_os("APPDATA") {
+                candidates
+                    .push(PathBuf::from(appdata).join("io.github.clash-verge-rev.clash-verge-rev"));
+            }
+            if let Some(local_appdata) = env::var_os("LOCALAPPDATA") {
+                candidates.push(
+                    PathBuf::from(local_appdata).join("io.github.clash-verge-rev.clash-verge-rev"),
+                );
+            }
+            candidates.push(home.join("AppData/Roaming/io.github.clash-verge-rev.clash-verge-rev"));
+            candidates.push(home.join("AppData/Local/io.github.clash-verge-rev.clash-verge-rev"));
+        }
+
+        candidates
+    }
+
+    pub fn detect_clash_verge_dir(&self) -> Option<PathBuf> {
+        self.clash_verge_dir_candidates()
+            .into_iter()
+            .find(|candidate| candidate.exists())
+    }
+
+    pub fn detected_clash_verge_base_config_candidates(&self) -> Vec<PathBuf> {
+        self.detect_clash_verge_dir()
+            .map(|dir| vec![dir.join("clash-verge.yaml"), dir.join("config.yaml")])
+            .unwrap_or_default()
+    }
+
+    pub fn detected_clash_verge_runtime_config_paths(&self) -> Vec<PathBuf> {
+        self.detect_clash_verge_dir()
+            .map(|dir| vec![dir.join("clash-verge.yaml"), dir.join("config.yaml")])
+            .unwrap_or_default()
+    }
+
+    pub fn detected_clash_verge_dns_config_path(&self) -> Option<PathBuf> {
+        self.detect_clash_verge_dir()
+            .map(|dir| dir.join("dns_config.yaml"))
+    }
+
+    pub fn detected_clash_verge_profile_merge_path(&self) -> Option<PathBuf> {
+        self.detect_clash_verge_dir()
+            .map(|dir| dir.join("profiles/Merge.yaml"))
+    }
+
+    pub fn detected_clash_verge_profiles_path(&self) -> Option<PathBuf> {
+        self.detect_clash_verge_dir()
+            .map(|dir| dir.join("profiles.yaml"))
     }
 }
 
@@ -130,6 +201,18 @@ pub struct AppConfig {
     #[serde(default)]
     pub custom_rules: Vec<CustomRule>,
 
+    #[serde(default)]
+    pub managed_tailscale_compat: Option<ManagedTailscaleCompat>,
+
+    /// User-owned site defaults for Tailscale/DERP compatibility.
+    ///
+    /// These are the canonical values refresh workflows should apply when
+    /// building Mihomo configs for a specific site. Unlike
+    /// `managed_tailscale_compat`, this is not derived state and should not be
+    /// overwritten by merge runs.
+    #[serde(default)]
+    pub tailscale_compat_defaults: Option<TailscaleCompatDefaults>,
+
     /// Manually-managed server sources (references to local files containing share links).
     ///
     /// This is intentionally a file reference so secrets (trojan passwords, etc.) do not need to
@@ -151,6 +234,26 @@ pub struct ManualServerRef {
 
 fn default_true() -> bool {
     true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ManagedTailscaleCompat {
+    #[serde(default)]
+    pub fake_ip_filter: Vec<String>,
+    #[serde(default)]
+    pub route_exclude_address: Vec<String>,
+    #[serde(default)]
+    pub rules: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct TailscaleCompatDefaults {
+    #[serde(default)]
+    pub tailnet_suffixes: Vec<String>,
+    #[serde(default)]
+    pub direct_domains: Vec<String>,
+    #[serde(default)]
+    pub route_exclude_address: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -345,6 +448,8 @@ mod tests {
         let config = load_app_config(&paths).await.unwrap();
         assert_eq!(config.last_subscription_url, None);
         assert_eq!(config.custom_rules.len(), 0);
+        assert_eq!(config.managed_tailscale_compat, None);
+        assert_eq!(config.tailscale_compat_defaults, None);
         assert_eq!(config.manual_servers.len(), 0);
 
         // Test saving and loading with data
@@ -362,6 +467,16 @@ mod tests {
                     via: "DIRECT".to_string(),
                 },
             ],
+            managed_tailscale_compat: Some(ManagedTailscaleCompat {
+                fake_ip_filter: vec!["+.tailscale.com".to_string()],
+                route_exclude_address: vec!["100.64.0.0/10".to_string()],
+                rules: vec!["DOMAIN-SUFFIX,tailscale.com,DIRECT".to_string()],
+            }),
+            tailscale_compat_defaults: Some(TailscaleCompatDefaults {
+                tailnet_suffixes: vec!["example.com".to_string()],
+                direct_domains: vec!["hs.example.com".to_string(), "derp.example.com".to_string()],
+                route_exclude_address: vec!["203.0.113.10/32".to_string()],
+            }),
             manual_servers: vec![ManualServerRef {
                 name: "jp-vultr".to_string(),
                 file: PathBuf::from("/run/secrets/manual_share_links"),
@@ -381,6 +496,22 @@ mod tests {
         assert_eq!(loaded.custom_rules[0].domain, "example.com");
         assert_eq!(loaded.custom_rules[0].kind, RuleKind::Domain);
         assert_eq!(loaded.custom_rules[1].kind, RuleKind::DomainSuffix);
+        assert_eq!(
+            loaded.managed_tailscale_compat,
+            Some(ManagedTailscaleCompat {
+                fake_ip_filter: vec!["+.tailscale.com".to_string()],
+                route_exclude_address: vec!["100.64.0.0/10".to_string()],
+                rules: vec!["DOMAIN-SUFFIX,tailscale.com,DIRECT".to_string()],
+            })
+        );
+        assert_eq!(
+            loaded.tailscale_compat_defaults,
+            Some(TailscaleCompatDefaults {
+                tailnet_suffixes: vec!["example.com".to_string()],
+                direct_domains: vec!["hs.example.com".to_string(), "derp.example.com".to_string(),],
+                route_exclude_address: vec!["203.0.113.10/32".to_string()],
+            })
+        );
         assert_eq!(loaded.manual_servers.len(), 1);
         assert_eq!(loaded.manual_servers[0].name, "jp-vultr");
     }

@@ -55,10 +55,6 @@ pub fn apply_base_config(mut merged: ClashConfig, base: &ClashConfig) -> ClashCo
     }
     merged.extra = extra;
 
-    if !base.rules.is_empty() {
-        merged.rules = base.rules.clone();
-    }
-
     if !base.proxy_groups.is_empty() {
         let names = merged.proxy_names();
         let mut rebuilt = Vec::with_capacity(base.proxy_groups.len());
@@ -296,7 +292,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_base_config_overrides_rules_and_groups() {
+    fn test_apply_base_config_preserves_rules_and_overrides_groups() {
         let mut base = ClashConfig {
             port: Some(8000),
             rules: vec!["BASE_RULE".to_string()],
@@ -311,7 +307,7 @@ mod tests {
 
         let result = apply_base_config(merged, &base);
         assert_eq!(result.port, Some(8000));
-        assert_eq!(result.rules, vec!["BASE_RULE".to_string()]);
+        assert_eq!(result.rules, vec!["MERGED_RULE".to_string()]);
         assert_eq!(result.proxy_groups.len(), 1);
         let group = result.proxy_groups[0].as_mapping().unwrap();
         let proxies = group

@@ -2,14 +2,26 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use mihomo_core::output::{ConfigDeployer, FileDeployer};
-use mihomo_core::storage::{self, AppPaths, CustomRule, ManualServerRef, RuleKind, SubscriptionList};
+use mihomo_core::storage::{
+    self, AppPaths, CustomRule, ManagedTailscaleCompat, ManualServerRef, RuleKind, SubscriptionList,
+};
 use mihomo_core::subscription::{Subscription, SubscriptionKind};
 use mihomo_core::{merge_configs, Template};
+use serde::Deserialize;
+use serde_yaml::Value;
 use tokio::fs;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
+
+const SAFE_FAKE_IP_RANGE: &str = "172.19.0.1/16";
+const TAILSCALE_BASE_FAKE_IP_BYPASS: [&str; 2] = ["+.tailscale.com", "+.ts.net"];
+const TAILSCALE_ROUTE_EXCLUDES: [&str; 2] = ["100.64.0.0/10", "fd7a:115c:a1e0::/48"];
+const TAILSCALE_BASE_DIRECT_RULES: [&str; 2] = [
+    "DOMAIN-SUFFIX,tailscale.com,DIRECT",
+    "DOMAIN-SUFFIX,ts.net,DIRECT",
+];
 
 #[derive(Parser)]
 #[command(
@@ -39,6 +51,9 @@ Quick Start Examples
 
   Use a base-config to align ports/rules/groups with clash-verge-rev:
     mihomo-cli merge --base-config ~/.config/mihomocli/base-config.yaml -s https://example.com/sub.yaml
+
+  Auto-detect local Clash Verge config and sync the generated result back:
+    mihomo-cli merge --use-last --sync-to-clash-verge
 
   Override subscription HTTP User-Agent:
     mihomo-cli merge -s https://example.com/sub.yaml --subscription-ua "my-client/1.0"
@@ -96,6 +111,7 @@ Notes
   - Default directories live under ~/.config/mihomocli and ~/.cache/mihomocli.
   - The CLI downloads geo resources on demand into ~/.config/mihomocli/resources/.
   - Template lookup resolves relative paths under ~/.config/mihomocli/templates/.
+  - If Clash Verge is installed locally, base-config and sync targets can be auto-detected.
 "#
 )]
 struct Cli {
@@ -132,11 +148,19 @@ Examples:
     mihomo-cli merge --stdout -s https://example.com/sub.yaml
 
 
+  Use the detected Clash Verge config as base and sync the generated result back:
+
+    mihomo-cli merge --use-last --sync-to-clash-verge
+
+
 Notes:
 
   - Relative paths for --template are resolved under ~/.config/mihomocli/templates/.
 
   - Relative paths for --base-config are resolved under ~/.config/mihomocli/.
+
+  - If --base-config is omitted, the CLI first checks ~/.config/mihomocli/base-config.yaml,
+    then auto-detects Clash Verge's exported config (preferring clash-verge.yaml, then config.yaml).
 
   - If --subscriptions-file is omitted, the default list at ~/.config/mihomocli/subscriptions.yaml is used.
 
@@ -158,17 +182,39 @@ Notes:
 
   - Use --dev-rules-show to print the generated list (without changing output unless --dev-rules is enabled).
 
+  - When --sync-to-clash-verge is set, the CLI first writes the normal output file and then
+    backs up Clash Verge's current config.yaml before replacing it with the generated result.
+
   - Fake-IP bypass: To exempt domains from fake-ip (avoid DNS hijack),
     use --fake-ip-bypass <PATTERN>. This appends to dns.fake-ip-filter and
     ensures fake-ip-filter-mode: blacklist. Examples:
 
       mihomo-cli merge \
         -s https://example.com/sub.yaml \
-        --fake-ip-bypass '+.zhsjf.cn' \
-        --fake-ip-bypass 'hs.zhsjf.cn'
+        --fake-ip-bypass '+.example.com' \
+        --fake-ip-bypass 'hs.example.com'
+
+  Tailscale compatibility: keep fake-ip and tun from hijacking tailnet traffic:
+
+    mihomo-cli merge --tailscale-compatible
+
+  Tailscale compatibility with a custom tailnet suffix:
+
+    mihomo-cli merge --tailscale-compatible --tailscale-tailnet-suffix example.com
+
+  Also sync the Tailscale-safe dns/profile source files back into Clash Verge:
+
+    mihomo-cli merge --tailscale-compatible --tailscale-tailnet-suffix example.com --sync-to-clash-verge-sources
 "#
     )]
     Merge(MergeArgs),
+
+    #[command(
+        name = "refresh-clash-verge",
+        about = "Refresh Clash Verge from the active local subscription",
+        long_about = "Resolve the active Clash Verge remote subscription from profiles.yaml (unless a URL is passed explicitly), then run the same merge/sync flow used for local desktop refreshes. This keeps the refresh logic inside mihomo-cli instead of shell wrappers, which also makes future macOS/Windows adaptations live in code."
+    )]
+    RefreshClashVerge(RefreshClashVergeArgs),
 
     /// Show or manage cached state and quick rules
     #[command(subcommand)]
@@ -181,6 +227,12 @@ Notes:
     /// Initialize config directories and default template
     #[command(about = "Create ~/.config/mihomocli structure and seed template")]
     Init,
+
+    #[command(
+        about = "Inspect local Mihomo, Clash Verge, system proxy, and Tailscale state",
+        long_about = "Best-effort local diagnostics for the common desktop setup. Reports file-backed Clash/Mihomo config state, whether macOS system proxies appear enabled, Tailscale CLI health when available, and live controller connection hints when the controller API is reachable."
+    )]
+    Doctor(DoctorArgs),
 }
 
 // Note: default clap styles are used to avoid introducing extra dependencies
@@ -203,9 +255,25 @@ struct MergeArgs {
     #[arg(long = "subscription", short = 's')]
     subscriptions: Vec<String>,
 
-    /// Output config file path. Defaults to spec output if omitted.
+    /// Output config file path. Defaults to ~/.config/mihomocli/output/clash-verge.yaml if omitted.
     #[arg(long)]
     output: Option<PathBuf>,
+
+    /// Final Clash mode for the generated config.
+    #[arg(long = "mode", value_enum, default_value_t = ConfigMode::Rule)]
+    mode: ConfigMode,
+
+    /// Sniffer preset for transparent/TUN traffic.
+    #[arg(long = "sniffer-preset", value_enum, default_value_t = SnifferPreset::Tun)]
+    sniffer_preset: SnifferPreset,
+
+    /// Also copy the generated YAML into the detected Clash Verge config.yaml.
+    #[arg(long = "sync-to-clash-verge", default_value_t = false)]
+    sync_to_clash_verge: bool,
+
+    /// Also sync Tailscale-safe dns/profile settings into Clash Verge source files.
+    #[arg(long = "sync-to-clash-verge-sources", default_value_t = false)]
+    sync_to_clash_verge_sources: bool,
 
     /// Write merged config to stdout instead of a file.
     #[arg(long)]
@@ -251,7 +319,7 @@ struct MergeArgs {
     external_controller_secret: Option<String>,
 
     /// Append entries to dns.fake-ip-filter (to avoid DNS hijacking under fake-ip mode)
-    /// Example: --fake-ip-filter-add "+.zhsjf.cn" --fake-ip-filter-add "hs.zhsjf.cn"
+    /// Example: --fake-ip-filter-add "+.example.com" --fake-ip-filter-add "hs.example.com"
     #[arg(long = "fake-ip-filter-add")]
     fake_ip_filter_add: Vec<String>,
 
@@ -265,14 +333,103 @@ struct MergeArgs {
     #[arg(long = "k8s-cidr-exclude")]
     k8s_cidr_exclude: Vec<String>,
 
+    /// Add arbitrary CIDRs to tun.route-exclude-address (repeatable).
+    /// Use this to keep specific remote IPs/subnets out of mihomo TUN routing.
+    #[arg(long = "route-exclude-address-add")]
+    route_exclude_address_add: Vec<String>,
+
     /// Bypass fake-ip for specific domains/patterns (shorthand for adding to dns.fake-ip-filter in blacklist mode)
-    /// Example: --fake-ip-bypass '+.zhsjf.cn' --fake-ip-bypass 'hs.zhsjf.cn'
+    /// Example: --fake-ip-bypass '+.example.com' --fake-ip-bypass 'hs.example.com'
     #[arg(long = "fake-ip-bypass")]
     fake_ip_bypass: Vec<String>,
 
     /// Do not write output; print a concise summary of the merged result
     #[arg(long = "dry-run", default_value_t = false)]
     dry_run: bool,
+
+    /// Keep fake-ip and tun compatible with Tailscale by avoiding fake-ip overlap,
+    /// bypassing Tailscale domains, and excluding tailnet CIDRs from tun routing.
+    #[arg(long = "tailscale-compatible", default_value_t = false)]
+    tailscale_compatible: bool,
+
+    /// Tailnet DNS suffixes whose `tail.<suffix>` names should bypass fake-ip
+    /// and be forced DIRECT under --tailscale-compatible. Repeatable.
+    #[arg(long = "tailscale-tailnet-suffix")]
+    tailscale_tailnet_suffixes: Vec<String>,
+
+    /// Additional exact domains or domain suffixes that should bypass fake-ip
+    /// and be forced DIRECT under --tailscale-compatible. Repeatable.
+    /// Examples: --tailscale-direct-domain derp.example.com --tailscale-direct-domain +.corp.example.com
+    #[arg(long = "tailscale-direct-domain")]
+    tailscale_direct_domains: Vec<String>,
+}
+
+#[derive(Args)]
+struct RefreshClashVergeArgs {
+    /// Explicit subscription URL. If omitted, the current Clash Verge remote subscription is used.
+    subscription: Option<String>,
+
+    /// Final Clash mode for the generated config.
+    #[arg(long = "mode")]
+    mode: Option<ConfigMode>,
+
+    /// Sniffer preset for transparent/TUN traffic.
+    #[arg(long = "sniffer-preset")]
+    sniffer_preset: Option<SnifferPreset>,
+
+    /// Disable the Tailscale compatibility patch set.
+    #[arg(long = "no-tailscale-compatible", default_value_t = false)]
+    no_tailscale_compatible: bool,
+
+    /// Tailnet DNS suffixes whose `tail.<suffix>` names should bypass fake-ip and be forced DIRECT.
+    #[arg(long = "tailscale-tailnet-suffix")]
+    tailscale_tailnet_suffixes: Vec<String>,
+
+    /// Additional domains or suffixes that should bypass fake-ip and be forced DIRECT.
+    #[arg(long = "tailscale-direct-domain")]
+    tailscale_direct_domains: Vec<String>,
+
+    /// Additional CIDRs that should stay out of the Mihomo TUN.
+    #[arg(long = "route-exclude-address-add")]
+    route_exclude_address_add: Vec<String>,
+
+    /// Preview the resolved merge without writing files.
+    #[arg(long = "dry-run", default_value_t = false)]
+    dry_run: bool,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+enum ConfigMode {
+    Rule,
+    Global,
+    Direct,
+}
+
+impl ConfigMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Rule => "rule",
+            Self::Global => "global",
+            Self::Direct => "direct",
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+enum SnifferPreset {
+    Off,
+    Tun,
+}
+
+#[derive(Args)]
+struct DoctorArgs {
+    /// Include a short sample of current live controller connections when available.
+    #[arg(long = "show-connections", default_value_t = true)]
+    show_connections: bool,
+
+    /// Domains to highlight in live connections.
+    #[arg(long = "focus-domain")]
+    focus_domains: Vec<String>,
 }
 
 #[tokio::main]
@@ -283,9 +440,11 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Merge(args) => run_merge(args).await?,
+        Commands::RefreshClashVerge(args) => run_refresh_clash_verge(args).await?,
         Commands::Manage(cmd) => run_manage(cmd).await?,
         Commands::Test(args) => run_test(args).await?,
         Commands::Init => run_init().await?,
+        Commands::Doctor(args) => run_doctor(args).await?,
     }
 
     Ok(())
@@ -312,6 +471,1010 @@ async fn run_init() -> anyhow::Result<()> {
     );
 
     Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct ClashVergeProfiles {
+    current: Option<String>,
+    #[serde(default)]
+    items: Vec<ClashVergeProfileItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClashVergeProfileItem {
+    uid: Option<String>,
+    url: Option<String>,
+}
+
+async fn run_refresh_clash_verge(args: RefreshClashVergeArgs) -> anyhow::Result<()> {
+    let paths = AppPaths::new()?;
+    paths.ensure_runtime_dirs().await?;
+    let app_cfg = storage::load_app_config(&paths).await?;
+
+    let subscription = if let Some(subscription) = args.subscription.clone() {
+        subscription
+    } else {
+        detect_current_clash_verge_subscription_url(&paths).await?
+    };
+
+    let mode = args
+        .mode
+        .or_else(|| config_mode_from_env("MIHOMOCLI_MODE"))
+        .unwrap_or(ConfigMode::Rule);
+    let sniffer_preset = args
+        .sniffer_preset
+        .or_else(|| sniffer_preset_from_env("MIHOMOCLI_SNIFFER_PRESET"))
+        .unwrap_or(SnifferPreset::Tun);
+
+    let managed_tailnet_suffixes = app_cfg
+        .managed_tailscale_compat
+        .as_ref()
+        .map(derive_tailnet_suffixes_from_managed)
+        .unwrap_or_default();
+    let managed_direct_domains = app_cfg
+        .managed_tailscale_compat
+        .as_ref()
+        .map(derive_direct_domains_from_managed)
+        .unwrap_or_default();
+    let managed_route_excludes = app_cfg
+        .managed_tailscale_compat
+        .as_ref()
+        .map(derive_extra_route_excludes_from_managed)
+        .unwrap_or_default();
+
+    let configured_tailnet_suffixes = app_cfg
+        .tailscale_compat_defaults
+        .as_ref()
+        .map(|defaults| defaults.tailnet_suffixes.clone())
+        .filter(|items| !items.is_empty())
+        .unwrap_or(managed_tailnet_suffixes);
+    let configured_direct_domains = app_cfg
+        .tailscale_compat_defaults
+        .as_ref()
+        .map(|defaults| defaults.direct_domains.clone())
+        .filter(|items| !items.is_empty())
+        .unwrap_or(managed_direct_domains);
+    let configured_route_excludes = app_cfg
+        .tailscale_compat_defaults
+        .as_ref()
+        .map(|defaults| defaults.route_exclude_address.clone())
+        .filter(|items| !items.is_empty())
+        .unwrap_or(managed_route_excludes);
+
+    let tailnet_suffixes = merge_string_lists(
+        configured_tailnet_suffixes,
+        env_list("MIHOMOCLI_TAILSCALE_SUFFIXES"),
+        env_list("MIHOMOCLI_TAILSCALE_SUFFIX"),
+        args.tailscale_tailnet_suffixes,
+    );
+    let direct_domains = merge_string_lists(
+        configured_direct_domains,
+        env_list("MIHOMOCLI_TAILSCALE_DIRECT_DOMAINS"),
+        Vec::new(),
+        args.tailscale_direct_domains,
+    );
+    let direct_cidrs = merge_string_lists(
+        configured_route_excludes,
+        env_list("MIHOMOCLI_TAILSCALE_DIRECT_CIDRS"),
+        Vec::new(),
+        args.route_exclude_address_add,
+    );
+
+    println!("Refreshing generated Clash Verge config from subscription:");
+    println!("  {}", subscription);
+    println!("Using Tailscale tailnet suffixes:");
+    println!(
+        "  {}",
+        if tailnet_suffixes.is_empty() {
+            "<none>".to_string()
+        } else {
+            tailnet_suffixes.join(", ")
+        }
+    );
+    println!("Using extra Tailscale direct domains:");
+    println!(
+        "  {}",
+        if direct_domains.is_empty() {
+            "<none>".to_string()
+        } else {
+            direct_domains.join(", ")
+        }
+    );
+    println!("Using extra Tailscale route-exclude CIDRs:");
+    println!(
+        "  {}",
+        if direct_cidrs.is_empty() {
+            "<none>".to_string()
+        } else {
+            direct_cidrs.join(", ")
+        }
+    );
+    println!("Using Clash mode:");
+    println!("  {}", mode.as_str());
+    println!("Using sniffer preset:");
+    println!(
+        "  {}",
+        match sniffer_preset {
+            SnifferPreset::Off => "off",
+            SnifferPreset::Tun => "tun",
+        }
+    );
+
+    let merge_args = MergeArgs {
+        template: None,
+        base_config: None,
+        subscriptions_file: None,
+        subscriptions: vec![subscription],
+        output: None,
+        mode,
+        sniffer_preset,
+        sync_to_clash_verge: true,
+        sync_to_clash_verge_sources: true,
+        stdout: false,
+        dev_rules: true,
+        dev_rules_via: DEFAULT_DEV_RULE_VIA.to_string(),
+        dev_rules_show: false,
+        use_last: false,
+        subscription_ua: None,
+        subscription_allow_base64: false,
+        external_controller_url: None,
+        external_controller_port: None,
+        external_controller_secret: None,
+        fake_ip_filter_add: Vec::new(),
+        fake_ip_filter_mode: None,
+        k8s_cidr_exclude: Vec::new(),
+        route_exclude_address_add: direct_cidrs,
+        fake_ip_bypass: Vec::new(),
+        dry_run: args.dry_run,
+        tailscale_compatible: !args.no_tailscale_compatible,
+        tailscale_tailnet_suffixes: tailnet_suffixes,
+        tailscale_direct_domains: direct_domains,
+    };
+
+    run_merge(merge_args).await
+}
+
+async fn detect_current_clash_verge_subscription_url(paths: &AppPaths) -> anyhow::Result<String> {
+    let profiles_path = paths
+        .detected_clash_verge_profiles_path()
+        .ok_or_else(|| anyhow!("could not detect Clash Verge profiles.yaml path"))?;
+
+    let raw = fs::read_to_string(&profiles_path)
+        .await
+        .with_context(|| format!("failed to read {}", profiles_path.display()))?;
+    let profiles: ClashVergeProfiles = serde_yaml::from_str(&raw)
+        .with_context(|| format!("failed to parse {}", profiles_path.display()))?;
+
+    extract_current_clash_verge_subscription_url(&profiles).ok_or_else(|| {
+        anyhow!(
+            "no current Clash Verge remote subscription URL found in {}",
+            profiles_path.display()
+        )
+    })
+}
+
+fn extract_current_clash_verge_subscription_url(profiles: &ClashVergeProfiles) -> Option<String> {
+    let current = profiles.current.as_ref()?;
+    profiles
+        .items
+        .iter()
+        .find(|item| item.uid.as_deref() == Some(current.as_str()))
+        .and_then(|item| item.url.as_ref())
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty())
+}
+
+fn env_list(name: &str) -> Vec<String> {
+    std::env::var(name)
+        .ok()
+        .map(|raw| split_list_items(&raw))
+        .unwrap_or_default()
+}
+
+fn split_list_items(raw: &str) -> Vec<String> {
+    raw.split(|ch: char| ch == ',' || ch.is_whitespace())
+        .filter(|item| !item.is_empty())
+        .map(|item| item.to_string())
+        .collect()
+}
+
+fn merge_string_lists(
+    primary: Vec<String>,
+    secondary: Vec<String>,
+    tertiary: Vec<String>,
+    explicit: Vec<String>,
+) -> Vec<String> {
+    let mut merged = Vec::new();
+    extend_unique(&mut merged, primary);
+    extend_unique(&mut merged, secondary);
+    extend_unique(&mut merged, tertiary);
+    extend_unique(&mut merged, explicit);
+    merged
+}
+
+fn extend_unique(dest: &mut Vec<String>, values: Vec<String>) {
+    for value in values {
+        if !dest.iter().any(|existing| existing == &value) {
+            dest.push(value);
+        }
+    }
+}
+
+fn config_mode_from_env(name: &str) -> Option<ConfigMode> {
+    match std::env::var(name)
+        .ok()?
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "rule" => Some(ConfigMode::Rule),
+        "global" => Some(ConfigMode::Global),
+        "direct" => Some(ConfigMode::Direct),
+        other => {
+            warn!(env = %name, value = %other, "ignoring invalid config mode from environment");
+            None
+        }
+    }
+}
+
+fn sniffer_preset_from_env(name: &str) -> Option<SnifferPreset> {
+    match std::env::var(name)
+        .ok()?
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "tun" => Some(SnifferPreset::Tun),
+        "off" => Some(SnifferPreset::Off),
+        other => {
+            warn!(env = %name, value = %other, "ignoring invalid sniffer preset from environment");
+            None
+        }
+    }
+}
+
+fn derive_tailnet_suffixes_from_managed(managed: &ManagedTailscaleCompat) -> Vec<String> {
+    managed
+        .fake_ip_filter
+        .iter()
+        .filter_map(|entry| entry.strip_prefix("+.tail."))
+        .map(|suffix| suffix.to_string())
+        .collect()
+}
+
+fn derive_direct_domains_from_managed(managed: &ManagedTailscaleCompat) -> Vec<String> {
+    let mut domains = Vec::new();
+
+    for rule in &managed.rules {
+        if TAILSCALE_BASE_DIRECT_RULES.contains(&rule.as_str()) {
+            continue;
+        }
+
+        let mut parts = rule.splitn(3, ',');
+        let Some(kind) = parts.next() else {
+            continue;
+        };
+        let Some(target) = parts.next() else {
+            continue;
+        };
+        let Some(via) = parts.next() else {
+            continue;
+        };
+        if !via.eq_ignore_ascii_case("DIRECT") {
+            continue;
+        }
+
+        match kind {
+            "DOMAIN" => {
+                if !target.is_empty() {
+                    domains.push(target.to_string());
+                }
+            }
+            "DOMAIN-SUFFIX" => {
+                if !target.starts_with("tail.")
+                    && !target.eq_ignore_ascii_case("tailscale.com")
+                    && !target.eq_ignore_ascii_case("ts.net")
+                {
+                    domains.push(format!("+.{}", target));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut deduped = Vec::new();
+    extend_unique(&mut deduped, domains);
+    deduped
+}
+
+fn derive_extra_route_excludes_from_managed(managed: &ManagedTailscaleCompat) -> Vec<String> {
+    managed
+        .route_exclude_address
+        .iter()
+        .filter(|entry| !TAILSCALE_ROUTE_EXCLUDES.contains(&entry.as_str()))
+        .cloned()
+        .collect()
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeSummary {
+    path: PathBuf,
+    mode: Option<String>,
+    tun_enabled: Option<bool>,
+    tun_auto_route: Option<bool>,
+    sniffer_enabled: bool,
+    enhanced_mode: Option<String>,
+    fake_ip_range: Option<String>,
+    route_excludes: Vec<String>,
+    rules_count: usize,
+    controller: Option<ControllerEndpoint>,
+}
+
+#[derive(Debug, Clone)]
+struct ControllerEndpoint {
+    host: Option<String>,
+    port: Option<u16>,
+    secret: Option<String>,
+    unix_socket: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ConnectionRecord {
+    host: Option<String>,
+    inbound_name: Option<String>,
+    source_ip: Option<String>,
+    chains: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ProxyEntry {
+    kind: &'static str,
+    host: String,
+    port: String,
+}
+
+async fn run_doctor(args: DoctorArgs) -> anyhow::Result<()> {
+    let paths = AppPaths::new()?;
+    paths.ensure_runtime_dirs().await?;
+
+    let runtime_paths = paths.detected_clash_verge_runtime_config_paths();
+    let runtime_summaries = load_runtime_summaries(&runtime_paths).await;
+
+    println!("mihomo-cli doctor");
+    println!();
+
+    if runtime_summaries.is_empty() {
+        println!("Clash Verge runtime files:");
+        println!("  status: no local runtime files detected");
+    } else {
+        println!("Clash Verge runtime files:");
+        for summary in &runtime_summaries {
+            print_runtime_summary(summary);
+        }
+
+        if runtime_summaries.len() >= 2 {
+            let primary = &runtime_summaries[0];
+            let aligned = runtime_summaries[1..]
+                .iter()
+                .all(|candidate| runtime_summary_core_eq(primary, candidate));
+            println!(
+                "  file-state-aligned: {}",
+                if aligned { "yes" } else { "no" }
+            );
+        }
+    }
+
+    println!();
+    print_system_proxy_summary();
+    println!();
+    print_tailscale_summary();
+    println!();
+
+    if let Some(controller) = runtime_summaries
+        .iter()
+        .find_map(|summary| summary.controller.clone())
+    {
+        print_controller_summary(&controller, &args);
+    } else {
+        println!("Controller:");
+        println!("  status: unavailable (no controller settings found in local config)");
+    }
+
+    Ok(())
+}
+
+async fn load_runtime_summaries(paths: &[PathBuf]) -> Vec<RuntimeSummary> {
+    let mut summaries = Vec::new();
+
+    for path in paths {
+        let Ok(true) = fs::try_exists(path).await else {
+            continue;
+        };
+        let Ok(raw) = fs::read_to_string(path).await else {
+            continue;
+        };
+        let Ok(cfg) = mihomo_core::ClashConfig::from_yaml_str(&raw) else {
+            continue;
+        };
+        summaries.push(runtime_summary_from_config(path, &cfg));
+    }
+
+    summaries
+}
+
+fn runtime_summary_from_config(path: &Path, cfg: &mihomo_core::ClashConfig) -> RuntimeSummary {
+    let mode = cfg
+        .extra
+        .get("mode")
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned);
+
+    let tun_map = cfg.extra.get("tun").and_then(|value| value.as_mapping());
+    let tun_enabled = tun_map.and_then(|map| bool_from_mapping(map, "enable"));
+    let tun_auto_route = tun_map.and_then(|map| bool_from_mapping(map, "auto-route"));
+    let route_excludes = tun_map
+        .map(|map| string_list_from_mapping(map, "route-exclude-address"))
+        .unwrap_or_default();
+
+    let dns_map = cfg.extra.get("dns").and_then(|value| value.as_mapping());
+    let enhanced_mode = dns_map.and_then(|map| string_from_mapping(map, "enhanced-mode"));
+    let fake_ip_range = dns_map.and_then(|map| string_from_mapping(map, "fake-ip-range"));
+
+    let sniffer_enabled = cfg.extra.contains_key("sniffer");
+
+    RuntimeSummary {
+        path: path.to_path_buf(),
+        mode,
+        tun_enabled,
+        tun_auto_route,
+        sniffer_enabled,
+        enhanced_mode,
+        fake_ip_range,
+        route_excludes,
+        rules_count: cfg.rules.len(),
+        controller: parse_controller_endpoint(cfg),
+    }
+}
+
+fn parse_controller_endpoint(cfg: &mihomo_core::ClashConfig) -> Option<ControllerEndpoint> {
+    let http = cfg
+        .extra
+        .get("external-controller")
+        .and_then(|value| value.as_str())
+        .and_then(parse_host_port);
+
+    let unix_socket = cfg
+        .extra
+        .get("external-controller-unix")
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned);
+
+    let secret = cfg
+        .extra
+        .get("secret")
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned);
+
+    if http.is_none() && unix_socket.is_none() {
+        return None;
+    }
+
+    Some(ControllerEndpoint {
+        host: http.as_ref().map(|(host, _)| host.clone()),
+        port: http.map(|(_, port)| port),
+        secret,
+        unix_socket,
+    })
+}
+
+fn print_runtime_summary(summary: &RuntimeSummary) {
+    println!("  path: {}", summary.path.display());
+    println!(
+        "    mode={}, tun={}, auto-route={}, sniffer={}",
+        summary.mode.as_deref().unwrap_or("<unset>"),
+        format_bool_opt(summary.tun_enabled),
+        format_bool_opt(summary.tun_auto_route),
+        if summary.sniffer_enabled { "on" } else { "off" }
+    );
+    println!(
+        "    dns.enhanced-mode={}, fake-ip-range={}, rules={}",
+        summary.enhanced_mode.as_deref().unwrap_or("<unset>"),
+        summary.fake_ip_range.as_deref().unwrap_or("<unset>"),
+        summary.rules_count
+    );
+    println!(
+        "    route-excludes={}",
+        if summary.route_excludes.is_empty() {
+            "<none>".to_string()
+        } else {
+            summary.route_excludes.join(", ")
+        }
+    );
+    if let Some(controller) = summary.controller.as_ref() {
+        let http = match (&controller.host, controller.port) {
+            (Some(host), Some(port)) => format!("{host}:{port}"),
+            _ => "<unset>".to_string(),
+        };
+        println!(
+            "    controller=http:{} unix:{}",
+            http,
+            controller.unix_socket.as_deref().unwrap_or("<unset>")
+        );
+    }
+}
+
+fn runtime_summary_core_eq(left: &RuntimeSummary, right: &RuntimeSummary) -> bool {
+    left.mode == right.mode
+        && left.tun_enabled == right.tun_enabled
+        && left.tun_auto_route == right.tun_auto_route
+        && left.sniffer_enabled == right.sniffer_enabled
+        && left.enhanced_mode == right.enhanced_mode
+        && left.fake_ip_range == right.fake_ip_range
+        && left.route_excludes == right.route_excludes
+        && left.rules_count == right.rules_count
+}
+
+fn print_system_proxy_summary() {
+    println!("System proxy:");
+
+    if !cfg!(target_os = "macos") {
+        println!("  status: unsupported on this platform");
+        return;
+    }
+
+    match std::process::Command::new("scutil").arg("--proxy").output() {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let proxies = parse_scutil_proxy(&stdout);
+            if proxies.is_empty() {
+                println!("  status: scutil reports no enabled system proxies");
+            } else {
+                println!("  status: enabled");
+                for proxy in proxies {
+                    println!("  {} -> {}:{}", proxy.kind, proxy.host, proxy.port);
+                }
+            }
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            println!(
+                "  status: unavailable ({})",
+                trimmed_single_line(&stderr).unwrap_or_else(|| "scutil failed".to_string())
+            );
+        }
+        Err(err) => {
+            println!("  status: unavailable ({err})");
+        }
+    }
+}
+
+fn parse_scutil_proxy(output: &str) -> Vec<ProxyEntry> {
+    let mut http_enable = false;
+    let mut https_enable = false;
+    let mut socks_enable = false;
+    let mut http_proxy = String::new();
+    let mut https_proxy = String::new();
+    let mut socks_proxy = String::new();
+    let mut http_port = String::new();
+    let mut https_port = String::new();
+    let mut socks_port = String::new();
+
+    for line in output.lines() {
+        let mut parts = line.splitn(2, ':');
+        let Some(key) = parts.next().map(str::trim) else {
+            continue;
+        };
+        let Some(value) = parts.next().map(str::trim) else {
+            continue;
+        };
+
+        match key {
+            "HTTPEnable" => http_enable = value == "1",
+            "HTTPProxy" => http_proxy = value.to_string(),
+            "HTTPPort" => http_port = value.to_string(),
+            "HTTPSEnable" => https_enable = value == "1",
+            "HTTPSProxy" => https_proxy = value.to_string(),
+            "HTTPSPort" => https_port = value.to_string(),
+            "SOCKSEnable" => socks_enable = value == "1",
+            "SOCKSProxy" => socks_proxy = value.to_string(),
+            "SOCKSPort" => socks_port = value.to_string(),
+            _ => {}
+        }
+    }
+
+    let mut proxies = Vec::new();
+    if http_enable && !http_proxy.is_empty() {
+        proxies.push(ProxyEntry {
+            kind: "HTTP",
+            host: http_proxy,
+            port: http_port,
+        });
+    }
+    if https_enable && !https_proxy.is_empty() {
+        proxies.push(ProxyEntry {
+            kind: "HTTPS",
+            host: https_proxy,
+            port: https_port,
+        });
+    }
+    if socks_enable && !socks_proxy.is_empty() {
+        proxies.push(ProxyEntry {
+            kind: "SOCKS",
+            host: socks_proxy,
+            port: socks_port,
+        });
+    }
+    proxies
+}
+
+fn print_tailscale_summary() {
+    println!("Tailscale:");
+
+    let tailscale_candidates = [
+        "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+        "tailscale",
+    ];
+
+    let mut last_error: Option<String> = None;
+    for candidate in tailscale_candidates {
+        let output = std::process::Command::new(candidate)
+            .args(["status", "--json"])
+            .output();
+        match output {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                match serde_json::from_str::<serde_json::Value>(&stdout) {
+                    Ok(json) => {
+                        let backend_state = json
+                            .get("BackendState")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("<unknown>");
+                        let health_count = json
+                            .get("Health")
+                            .and_then(|value| value.as_array())
+                            .map(|items| items.len())
+                            .unwrap_or(0);
+                        println!(
+                            "  status: backend={}, health-warnings={}",
+                            backend_state, health_count
+                        );
+                        if let Some(health) = json.get("Health").and_then(|value| value.as_array())
+                        {
+                            for item in health.iter().take(3) {
+                                if let Some(message) = item.as_str() {
+                                    println!("  warning: {}", message);
+                                }
+                            }
+                        }
+                        return;
+                    }
+                    Err(err) => {
+                        last_error = Some(format!("invalid JSON from {}: {}", candidate, err));
+                    }
+                }
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                last_error = trimmed_single_line(&stderr)
+                    .or_else(|| trimmed_single_line(&stdout))
+                    .or_else(|| Some(format!("{} exited with {}", candidate, output.status)));
+            }
+            Err(err) => {
+                last_error = Some(format!("{} unavailable: {}", candidate, err));
+            }
+        }
+    }
+
+    println!(
+        "  status: unavailable ({})",
+        last_error.unwrap_or_else(|| "tailscale CLI probe failed".to_string())
+    );
+}
+
+fn print_controller_summary(controller: &ControllerEndpoint, args: &DoctorArgs) {
+    println!("Controller:");
+
+    match (&controller.host, controller.port) {
+        (Some(host), Some(port)) => println!("  configured-http: {}:{}", host, port),
+        _ => println!("  configured-http: <unset>"),
+    }
+    println!(
+        "  configured-unix: {}",
+        controller.unix_socket.as_deref().unwrap_or("<unset>")
+    );
+
+    if let Some(probe) = probe_controller_http(controller) {
+        println!("  live-api: http");
+        if let Some(version) = probe.version_line {
+            println!("  version: {}", version);
+        }
+        print_connection_summary(probe.connections_json.as_deref(), args);
+        return;
+    }
+
+    if let Some(probe) = probe_controller_unix(controller) {
+        println!("  live-api: unix-socket");
+        if let Some(version) = probe.version_line {
+            println!("  version: {}", version);
+        }
+        print_connection_summary(probe.connections_json.as_deref(), args);
+        return;
+    }
+
+    println!("  live-api: unavailable");
+    println!("  note: controller could not be reached over HTTP or unix socket");
+}
+
+struct ControllerProbe {
+    version_line: Option<String>,
+    connections_json: Option<String>,
+}
+
+fn probe_controller_http(controller: &ControllerEndpoint) -> Option<ControllerProbe> {
+    let host = controller.host.as_ref()?;
+    let port = controller.port?;
+    let base = format!("http://{}:{}", normalize_controller_host(host), port);
+    let version_text = curl_controller_get(controller, &(base.clone() + "/version"))?;
+    let connections_text = curl_controller_get(controller, &(base + "/connections"));
+
+    Some(ControllerProbe {
+        version_line: trimmed_single_line(&version_text),
+        connections_json: connections_text,
+    })
+}
+
+fn probe_controller_unix(controller: &ControllerEndpoint) -> Option<ControllerProbe> {
+    let socket = controller.unix_socket.as_ref()?;
+    if !Path::new(socket).exists() {
+        return None;
+    }
+
+    let version_text =
+        curl_controller_get_with_socket(controller, socket, "http://localhost/version")?;
+    if version_text.trim().is_empty() {
+        return None;
+    }
+
+    let connections_text =
+        curl_controller_get_with_socket(controller, socket, "http://localhost/connections");
+
+    Some(ControllerProbe {
+        version_line: trimmed_single_line(&version_text),
+        connections_json: connections_text,
+    })
+}
+
+fn curl_controller_get(controller: &ControllerEndpoint, url: &str) -> Option<String> {
+    let mut command = std::process::Command::new("curl");
+    command.args(["-s", "-f"]);
+    if let Some(secret) = controller.secret.as_ref() {
+        if !secret.is_empty() {
+            command.args(["-H", &format!("Authorization: Bearer {}", secret)]);
+        }
+    }
+    command.arg(url);
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout).to_string();
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn curl_controller_get_with_socket(
+    controller: &ControllerEndpoint,
+    socket: &str,
+    url: &str,
+) -> Option<String> {
+    let mut command = std::process::Command::new("curl");
+    command.args(["--unix-socket", socket, "-s", "-f"]);
+    if let Some(secret) = controller.secret.as_ref() {
+        if !secret.is_empty() {
+            command.args(["-H", &format!("Authorization: Bearer {}", secret)]);
+        }
+    }
+    command.arg(url);
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout).to_string();
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn print_connection_summary(connections_json: Option<&str>, args: &DoctorArgs) {
+    if !args.show_connections {
+        println!("  connections: skipped");
+        return;
+    }
+
+    let Some(raw) = connections_json else {
+        println!("  connections: unavailable");
+        return;
+    };
+
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(raw) else {
+        println!("  connections: unavailable (invalid JSON)");
+        return;
+    };
+
+    let records = extract_connection_records(&json);
+    if records.is_empty() {
+        println!("  connections: no active connections reported");
+        return;
+    }
+
+    println!("  active-connections: {}", records.len());
+
+    let focus_domains = if args.focus_domains.is_empty() {
+        vec![
+            "chat.openai.com".to_string(),
+            "chatgpt.com".to_string(),
+            "ab.chatgpt.com".to_string(),
+            "api.anthropic.com".to_string(),
+        ]
+    } else {
+        args.focus_domains.clone()
+    };
+
+    let focused: Vec<&ConnectionRecord> = records
+        .iter()
+        .filter(|record| connection_matches_focus(record, &focus_domains))
+        .collect();
+
+    if focused.is_empty() {
+        println!("  focus-matches: none");
+        return;
+    }
+
+    let path_hint = infer_connection_path(&focused);
+    println!("  focus-matches: {}", focused.len());
+    println!("  likely-path: {}", path_hint);
+    for record in focused.iter().take(6) {
+        println!(
+            "  connection: host={} inbound={} source={} chains={}",
+            record.host.as_deref().unwrap_or("<unknown>"),
+            record.inbound_name.as_deref().unwrap_or("<unknown>"),
+            record.source_ip.as_deref().unwrap_or("<unknown>"),
+            if record.chains.is_empty() {
+                "<none>".to_string()
+            } else {
+                record.chains.join(">")
+            }
+        );
+    }
+}
+
+fn extract_connection_records(json: &serde_json::Value) -> Vec<ConnectionRecord> {
+    let Some(items) = json
+        .get("connections")
+        .and_then(|value| value.as_array())
+        .or_else(|| json.as_array())
+    else {
+        return Vec::new();
+    };
+
+    items.iter().map(connection_record_from_json).collect()
+}
+
+fn connection_record_from_json(value: &serde_json::Value) -> ConnectionRecord {
+    let host = json_string_path(value, &["metadata", "host"])
+        .or_else(|| json_string_path(value, &["metadata", "destinationIP"]))
+        .or_else(|| json_string_path(value, &["host"]));
+    let inbound_name = json_string_path(value, &["metadata", "inboundName"])
+        .or_else(|| json_string_path(value, &["inboundName"]));
+    let source_ip = json_string_path(value, &["metadata", "sourceIP"])
+        .or_else(|| json_string_path(value, &["sourceIP"]));
+    let chains = json_string_list_path(value, &["chains"])
+        .or_else(|| json_string_list_path(value, &["metadata", "chains"]))
+        .unwrap_or_default();
+
+    ConnectionRecord {
+        host,
+        inbound_name,
+        source_ip,
+        chains,
+    }
+}
+
+fn connection_matches_focus(record: &ConnectionRecord, focus_domains: &[String]) -> bool {
+    let Some(host) = record.host.as_ref() else {
+        return false;
+    };
+    focus_domains.iter().any(|focus| host.contains(focus))
+}
+
+fn infer_connection_path(records: &[&ConnectionRecord]) -> &'static str {
+    if records.iter().any(|record| {
+        record.source_ip.as_deref() == Some("127.0.0.1")
+            || record
+                .inbound_name
+                .as_deref()
+                .map(|name| name.contains("MIXED"))
+                == Some(true)
+    }) {
+        "local proxy / DEFAULT-MIXED"
+    } else if records.iter().any(|record| {
+        record
+            .inbound_name
+            .as_deref()
+            .map(|name| name.to_ascii_uppercase().contains("TUN"))
+            == Some(true)
+    }) {
+        "transparent TUN"
+    } else {
+        "unknown"
+    }
+}
+
+fn json_string_path(value: &serde_json::Value, path: &[&str]) -> Option<String> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current.as_str().map(ToOwned::to_owned)
+}
+
+fn json_string_list_path(value: &serde_json::Value, path: &[&str]) -> Option<Vec<String>> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    Some(
+        current
+            .as_array()?
+            .iter()
+            .filter_map(|value| value.as_str().map(ToOwned::to_owned))
+            .collect(),
+    )
+}
+
+fn string_from_mapping(map: &serde_yaml::Mapping, key: &str) -> Option<String> {
+    map.get(Value::String(key.to_string()))
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned)
+}
+
+fn bool_from_mapping(map: &serde_yaml::Mapping, key: &str) -> Option<bool> {
+    map.get(Value::String(key.to_string()))
+        .and_then(|value| value.as_bool())
+}
+
+fn string_list_from_mapping(map: &serde_yaml::Mapping, key: &str) -> Vec<String> {
+    map.get(Value::String(key.to_string()))
+        .and_then(|value| value.as_sequence())
+        .map(|seq| {
+            seq.iter()
+                .filter_map(|value| value.as_str().map(ToOwned::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn format_bool_opt(value: Option<bool>) -> &'static str {
+    match value {
+        Some(true) => "on",
+        Some(false) => "off",
+        None => "<unset>",
+    }
+}
+
+fn trimmed_single_line(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.lines().next().unwrap_or(trimmed).trim().to_string())
+    }
 }
 
 fn init_tracing() {
@@ -451,6 +1614,13 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
 
     if let Some(base) = base_config.as_ref() {
         merged = mihomo_core::merge::apply_base_config(merged, base);
+    }
+
+    apply_mode_override(&mut merged, args.mode);
+    apply_sniffer_preset(&mut merged, args.sniffer_preset);
+
+    if let Some(previous) = app_cfg.managed_tailscale_compat.as_ref() {
+        remove_tailscale_managed_items(&mut merged, previous);
     }
 
     let mut dev_rules_listing = None;
@@ -655,6 +1825,24 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
         }
     }
 
+    if args.tailscale_compatible {
+        apply_tailscale_compatibility(
+            &mut merged,
+            &args.tailscale_tailnet_suffixes,
+            &args.tailscale_direct_domains,
+        );
+        app_cfg.managed_tailscale_compat = Some(build_tailscale_managed_state(
+            &args.tailscale_tailnet_suffixes,
+            &args.tailscale_direct_domains,
+            &args.route_exclude_address_add,
+        ));
+    } else if app_cfg.managed_tailscale_compat.is_some() {
+        app_cfg.managed_tailscale_compat = None;
+    }
+
+    let fallback_via = resolve_dev_rules_via(&args.dev_rules_via, DEFAULT_DEV_RULE_VIA, &merged);
+    ensure_fallback_match_rule(&mut merged, &fallback_via);
+
     // Avoid hijacking Kubernetes pod/service CIDRs in tun mode.
     // This keeps in-cluster traffic (including DNS to kube-dns) out of the tun
     // device so service discovery remains stable.
@@ -676,10 +1864,11 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
                 let mut cidrs: Vec<String> =
                     vec!["10.42.0.0/16".to_string(), "10.43.0.0/16".to_string()];
                 cidrs.extend(args.k8s_cidr_exclude.iter().cloned());
+                cidrs.extend(args.route_exclude_address_add.iter().cloned());
 
                 for cidr in cidrs {
                     if !cidr.contains('/') {
-                        warn!(value = %cidr, "invalid CIDR for --k8s-cidr-exclude (expected like 10.42.0.0/16)");
+                        warn!(value = %cidr, "invalid CIDR for route-exclude-address addition (expected like 10.42.0.0/16)");
                         continue;
                     }
                     let exists = seq.iter().any(|v| v.as_str() == Some(cidr.as_str()));
@@ -711,13 +1900,14 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
 
     let yaml = merged.to_yaml_string()?;
 
+    let output_path = args
+        .output
+        .clone()
+        .unwrap_or_else(|| paths.generated_clash_verge_path());
+
     if args.stdout {
         println!("{}", yaml);
     } else {
-        let output_path = args
-            .output
-            .clone()
-            .unwrap_or_else(|| paths.output_config_path());
         ensure_parent(&output_path).await?;
         let deployer = FileDeployer {
             path: output_path.clone(),
@@ -726,6 +1916,44 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
             format!("failed to write merged config to {}", output_path.display())
         })?;
         println!("merged config written to {}", output_path.display());
+
+        if args.sync_to_clash_verge {
+            let clash_verge_paths = paths.detected_clash_verge_runtime_config_paths();
+            if clash_verge_paths.is_empty() {
+                return Err(anyhow!(
+                    "--sync-to-clash-verge requested, but no local Clash Verge runtime config was detected"
+                ));
+            }
+            for clash_verge_path in &clash_verge_paths {
+                ensure_parent(&clash_verge_path).await?;
+                if clash_verge_path.exists() {
+                    if let Some(backup) = backup_existing_file(&clash_verge_path).await? {
+                        println!(
+                            "backed up existing Clash Verge config to {}",
+                            backup.display()
+                        );
+                    }
+                }
+                let deployer = FileDeployer {
+                    path: clash_verge_path.clone(),
+                };
+                deployer.deploy(&yaml).await.with_context(|| {
+                    format!(
+                        "failed to sync merged config to Clash Verge runtime path {}",
+                        clash_verge_path.display()
+                    )
+                })?;
+                println!("synced config to {}", clash_verge_path.display());
+            }
+
+            if let Err(err) = reload_clash_verge_runtime(&merged, &clash_verge_paths).await {
+                warn!(error = %err, "failed to auto-reload Clash Verge runtime after sync");
+            }
+        }
+
+        if args.sync_to_clash_verge_sources {
+            sync_clash_verge_source_configs(&paths, &merged).await?;
+        }
     }
 
     if let Some(list) = dev_rules_listing.as_ref().filter(|_| args.dev_rules_show) {
@@ -765,12 +1993,16 @@ fn print_merge_summary(
     // DNS fake-ip summary
     let mut dns_mode: Option<String> = None;
     let mut dns_filter_total: Option<usize> = None;
+    let mut dns_fake_ip_range: Option<String> = None;
     if let Some(Value::Mapping(dns)) = merged.extra.get("dns") {
         if let Some(Value::String(m)) = dns.get(&Value::String("fake-ip-filter-mode".into())) {
             dns_mode = Some(m.clone());
         }
         if let Some(Value::Sequence(seq)) = dns.get(&Value::String("fake-ip-filter".into())) {
             dns_filter_total = Some(seq.len());
+        }
+        if let Some(Value::String(range)) = dns.get(&Value::String("fake-ip-range".into())) {
+            dns_fake_ip_range = Some(range.clone());
         }
     }
 
@@ -791,8 +2023,9 @@ fn print_merge_summary(
         proxies, groups, rules
     );
     println!(
-        "- fake-ip: mode={}, filter+={} (requested), total={}",
+        "- fake-ip: mode={}, range={}, filter+={} (requested), total={}",
         dns_mode.as_deref().unwrap_or("<none>"),
+        dns_fake_ip_range.as_deref().unwrap_or("<unset>"),
         args.fake_ip_bypass.len(),
         dns_filter_total
             .map(|n| n.to_string())
@@ -804,6 +2037,14 @@ fn print_merge_summary(
         dev_via.unwrap_or("<n/a>"),
         if args.dev_rules { dev_added } else { 0 }
     );
+    println!("- mode: {}", args.mode.as_str());
+    println!(
+        "- sniffer-preset: {}",
+        match args.sniffer_preset {
+            SnifferPreset::Off => "off",
+            SnifferPreset::Tun => "tun",
+        }
+    );
     println!("- manual-servers: <see app.yaml> (not shown in dry-run summary)");
     println!(
         "- external-controller: {}, secret={}",
@@ -813,11 +2054,529 @@ fn print_merge_summary(
     let would_write = args
         .output
         .clone()
-        .unwrap_or_else(|| paths.output_config_path());
+        .unwrap_or_else(|| paths.generated_clash_verge_path());
     println!(
         "- output: would write to {} (suppressed by --dry-run)",
         would_write.display()
     );
+    if args.sync_to_clash_verge {
+        let targets = paths.detected_clash_verge_runtime_config_paths();
+        let target = if targets.is_empty() {
+            "<not detected>".to_string()
+        } else {
+            targets
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        println!("- clash-verge-sync: {}", target);
+    }
+    if args.sync_to_clash_verge_sources {
+        let target = paths
+            .detect_clash_verge_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<not detected>".into());
+        println!("- clash-verge-source-sync: {}", target);
+    }
+    println!(
+        "- tailscale-compatible: {}",
+        if args.tailscale_compatible {
+            "true"
+        } else {
+            "false"
+        }
+    );
+    if args.tailscale_compatible {
+        println!(
+            "- tailscale-tailnet-suffixes: {}",
+            if args.tailscale_tailnet_suffixes.is_empty() {
+                "<none>".to_string()
+            } else {
+                args.tailscale_tailnet_suffixes.join(",")
+            }
+        );
+        println!(
+            "- tailscale-direct-domains: {}",
+            if args.tailscale_direct_domains.is_empty() {
+                "<none>".to_string()
+            } else {
+                args.tailscale_direct_domains.join(",")
+            }
+        );
+    }
+}
+
+fn normalize_direct_domain(domain: &str) -> Option<String> {
+    let normalized = domain.trim().trim_matches('.').to_ascii_lowercase();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn build_tailscale_fake_ip_bypass(
+    tailnet_suffixes: &[String],
+    direct_domains: &[String],
+) -> Vec<String> {
+    let mut items: Vec<String> = TAILSCALE_BASE_FAKE_IP_BYPASS
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+    for suffix in tailnet_suffixes {
+        if let Some(suffix) = normalize_direct_domain(suffix) {
+            items.push(format!("+.tail.{suffix}"));
+        }
+    }
+    for domain in direct_domains {
+        if let Some(domain) = normalize_direct_domain(domain) {
+            if let Some(stripped) = domain.strip_prefix("+.") {
+                items.push(format!("+.{stripped}"));
+            } else {
+                items.push(domain);
+            }
+        }
+    }
+    items.sort();
+    items.dedup();
+    items
+}
+
+fn build_tailscale_direct_rules(
+    tailnet_suffixes: &[String],
+    direct_domains: &[String],
+) -> Vec<String> {
+    let mut rules: Vec<String> = TAILSCALE_BASE_DIRECT_RULES
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+    for suffix in tailnet_suffixes {
+        if let Some(suffix) = normalize_direct_domain(suffix) {
+            rules.push(format!("DOMAIN-SUFFIX,tail.{suffix},DIRECT"));
+        }
+    }
+    for domain in direct_domains {
+        if let Some(domain) = normalize_direct_domain(domain) {
+            if let Some(stripped) = domain.strip_prefix("+.") {
+                rules.push(format!("DOMAIN-SUFFIX,{stripped},DIRECT"));
+            } else {
+                rules.push(format!("DOMAIN,{domain},DIRECT"));
+            }
+        }
+    }
+    rules.sort();
+    rules.dedup();
+    rules
+}
+
+fn build_tailscale_managed_state(
+    tailnet_suffixes: &[String],
+    direct_domains: &[String],
+    route_exclude_address_add: &[String],
+) -> ManagedTailscaleCompat {
+    let mut route_exclude_address: Vec<String> = TAILSCALE_ROUTE_EXCLUDES
+        .iter()
+        .map(|cidr| (*cidr).to_string())
+        .collect();
+    route_exclude_address.extend(route_exclude_address_add.iter().cloned());
+    route_exclude_address.sort();
+    route_exclude_address.dedup();
+
+    ManagedTailscaleCompat {
+        fake_ip_filter: build_tailscale_fake_ip_bypass(tailnet_suffixes, direct_domains),
+        route_exclude_address,
+        rules: build_tailscale_direct_rules(tailnet_suffixes, direct_domains),
+    }
+}
+
+fn remove_tailscale_managed_items(
+    merged: &mut mihomo_core::ClashConfig,
+    managed: &ManagedTailscaleCompat,
+) {
+    use serde_yaml::Value;
+    use std::collections::HashSet;
+
+    let managed_filters: HashSet<&str> =
+        managed.fake_ip_filter.iter().map(String::as_str).collect();
+    if let Some(filters) = merged
+        .extra
+        .get_mut("dns")
+        .and_then(|v| v.as_mapping_mut())
+        .and_then(|map| map.get_mut(Value::String("fake-ip-filter".to_string())))
+        .and_then(|value| value.as_sequence_mut())
+    {
+        filters.retain(|item| match item.as_str() {
+            Some(value) => !managed_filters.contains(value),
+            None => true,
+        });
+    }
+
+    let managed_route_excludes: HashSet<&str> = managed
+        .route_exclude_address
+        .iter()
+        .map(String::as_str)
+        .collect();
+    if let Some(excludes) = merged
+        .extra
+        .get_mut("tun")
+        .and_then(|v| v.as_mapping_mut())
+        .and_then(|map| map.get_mut(Value::String("route-exclude-address".to_string())))
+        .and_then(|value| value.as_sequence_mut())
+    {
+        excludes.retain(|item| match item.as_str() {
+            Some(value) => !managed_route_excludes.contains(value),
+            None => true,
+        });
+    }
+
+    let managed_rules: HashSet<&str> = managed.rules.iter().map(String::as_str).collect();
+    merged
+        .rules
+        .retain(|rule| !managed_rules.contains(rule.as_str()));
+}
+
+fn apply_tailscale_compatibility(
+    merged: &mut mihomo_core::ClashConfig,
+    tailnet_suffixes: &[String],
+    direct_domains: &[String],
+) {
+    use serde_yaml::{Mapping, Value};
+    let fake_ip_bypass = build_tailscale_fake_ip_bypass(tailnet_suffixes, direct_domains);
+    let direct_rules = build_tailscale_direct_rules(tailnet_suffixes, direct_domains);
+
+    let dns_value = merged
+        .extra
+        .entry("dns".to_string())
+        .or_insert_with(|| Value::Mapping(Mapping::new()));
+
+    if let Value::Mapping(dns_map) = dns_value {
+        let enhanced_key = Value::String("enhanced-mode".to_string());
+        let range_key = Value::String("fake-ip-range".to_string());
+        let mode_key = Value::String("fake-ip-filter-mode".to_string());
+        let filter_key = Value::String("fake-ip-filter".to_string());
+
+        let enhanced = dns_map
+            .get(&enhanced_key)
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        if enhanced.eq_ignore_ascii_case("fake-ip") {
+            dns_map.insert(mode_key, Value::String("blacklist".to_string()));
+
+            let current_range = dns_map
+                .get(&range_key)
+                .and_then(|v| v.as_str())
+                .map(str::to_owned);
+
+            match current_range.as_deref() {
+                Some(range) if range.starts_with("198.18.") || range.starts_with("198.19.") => {
+                    dns_map.insert(range_key, Value::String(SAFE_FAKE_IP_RANGE.to_string()));
+                    warn!(
+                        previous = %range,
+                        replacement = %SAFE_FAKE_IP_RANGE,
+                        "rewrote fake-ip-range to avoid Tailscale conflict"
+                    );
+                }
+                None => {
+                    dns_map.insert(range_key, Value::String(SAFE_FAKE_IP_RANGE.to_string()));
+                    info!(
+                        value = %SAFE_FAKE_IP_RANGE,
+                        "set default fake-ip-range compatible with Tailscale"
+                    );
+                }
+                _ => {}
+            }
+
+            let filter_seq = dns_map
+                .entry(filter_key)
+                .or_insert_with(|| Value::Sequence(Vec::new()));
+            if let Value::Sequence(seq) = filter_seq {
+                for item in &fake_ip_bypass {
+                    if !seq.iter().any(|v| v.as_str() == Some(item.as_str())) {
+                        seq.push(Value::String(item.clone()));
+                        info!(value = %item, "auto-added Tailscale fake-ip bypass");
+                    }
+                }
+            }
+        }
+    }
+
+    let tun_value = merged
+        .extra
+        .entry("tun".to_string())
+        .or_insert_with(|| Value::Mapping(Mapping::new()));
+
+    if let Value::Mapping(tun_map) = tun_value {
+        let key = Value::String("route-exclude-address".to_string());
+        let seq_value = tun_map
+            .entry(key)
+            .or_insert_with(|| Value::Sequence(Vec::new()));
+
+        if let Value::Sequence(seq) = seq_value {
+            for cidr in TAILSCALE_ROUTE_EXCLUDES {
+                if !seq.iter().any(|v| v.as_str() == Some(cidr)) {
+                    seq.push(Value::String(cidr.to_string()));
+                    info!(value = %cidr, "auto-added Tailscale tun route exclusion");
+                }
+            }
+        }
+    }
+
+    let mut prefixed_rules = Vec::new();
+    for rule in &direct_rules {
+        if !merged.rules.iter().any(|existing| existing == rule) {
+            prefixed_rules.push(rule.clone());
+        }
+    }
+    if !prefixed_rules.is_empty() {
+        prefixed_rules.extend(std::mem::take(&mut merged.rules));
+        merged.rules = prefixed_rules;
+    }
+}
+
+fn has_fallback_rule(cfg: &mihomo_core::ClashConfig) -> bool {
+    cfg.rules.iter().any(|rule| {
+        let normalized = rule.trim().to_ascii_uppercase();
+        normalized.starts_with("MATCH,")
+            || normalized.starts_with("FINAL,")
+            || normalized.starts_with("IP-CIDR,0.0.0.0/0,")
+            || normalized.starts_with("IP-CIDR6,::/0,")
+    })
+}
+
+fn ensure_fallback_match_rule(cfg: &mut mihomo_core::ClashConfig, via: &str) {
+    if has_fallback_rule(cfg) {
+        return;
+    }
+    cfg.rules.push(format!("MATCH,{via}"));
+}
+
+fn apply_mode_override(cfg: &mut mihomo_core::ClashConfig, mode: ConfigMode) {
+    cfg.extra
+        .insert("mode".to_string(), Value::String(mode.as_str().to_string()));
+}
+
+fn apply_sniffer_preset(cfg: &mut mihomo_core::ClashConfig, preset: SnifferPreset) {
+    match preset {
+        SnifferPreset::Off => {
+            cfg.extra.shift_remove("sniffer");
+        }
+        SnifferPreset::Tun => {
+            let sniffer = serde_yaml::from_str::<Value>(
+                r#"
+enable: true
+force-dns-mapping: true
+parse-pure-ip: true
+override-destination: false
+sniff:
+  HTTP:
+    ports: [80, 8080-8880]
+    override-destination: true
+  TLS:
+    ports: [443, 8443]
+  QUIC:
+    ports: [443, 8443]
+"#,
+            )
+            .expect("valid built-in sniffer preset");
+            cfg.extra.insert("sniffer".to_string(), sniffer);
+        }
+    }
+}
+
+async fn sync_clash_verge_source_configs(
+    paths: &AppPaths,
+    merged: &mihomo_core::ClashConfig,
+) -> anyhow::Result<()> {
+    use serde_yaml::Value;
+
+    let dns_path = paths
+        .detected_clash_verge_dns_config_path()
+        .ok_or_else(|| {
+            anyhow!("--sync-to-clash-verge-sources requested, but dns_config.yaml was not detected")
+        })?;
+    let merge_path = paths
+        .detected_clash_verge_profile_merge_path()
+        .ok_or_else(|| {
+            anyhow!(
+                "--sync-to-clash-verge-sources requested, but profiles/Merge.yaml was not detected"
+            )
+        })?;
+
+    let dns_source = fs::read_to_string(&dns_path)
+        .await
+        .with_context(|| format!("failed to read {}", dns_path.display()))?;
+    let merge_source = fs::read_to_string(&merge_path)
+        .await
+        .with_context(|| format!("failed to read {}", merge_path.display()))?;
+
+    let mut dns_doc: Value = serde_yaml::from_str(&dns_source)
+        .with_context(|| format!("failed to parse {}", dns_path.display()))?;
+    let mut merge_doc: Value = serde_yaml::from_str(&merge_source)
+        .with_context(|| format!("failed to parse {}", merge_path.display()))?;
+
+    let merged_dns = merged.extra.get("dns").cloned();
+    let merged_tun = merged.extra.get("tun").cloned();
+    let merged_hosts = merged.extra.get("hosts").cloned();
+    let merged_mode = merged.extra.get("mode").cloned();
+    let merged_sniffer = merged.extra.get("sniffer").cloned();
+
+    if let Some(ref src_dns) = merged_dns {
+        let dns_map = ensure_mapping_entry(&mut dns_doc, "dns");
+        if let Some(src_map) = src_dns.as_mapping() {
+            copy_mapping_key(src_map, dns_map, "enhanced-mode");
+            copy_mapping_key(src_map, dns_map, "fake-ip-range");
+            copy_mapping_key(src_map, dns_map, "fake-ip-filter-mode");
+            copy_mapping_key(src_map, dns_map, "fake-ip-filter");
+        }
+    }
+
+    if let Some(ref src_tun) = merged_tun {
+        let tun_map = ensure_mapping_entry(&mut dns_doc, "tun");
+        if let Some(src_map) = src_tun.as_mapping() {
+            copy_mapping_key(src_map, tun_map, "route-exclude-address");
+        }
+    }
+
+    if let Some(ref src_dns) = merged_dns {
+        let dns_map = ensure_mapping_entry(&mut merge_doc, "dns");
+        if let Some(src_map) = src_dns.as_mapping() {
+            copy_mapping_key(src_map, dns_map, "fake-ip-filter");
+        }
+    }
+
+    if let Some(ref src_tun) = merged_tun {
+        let tun_map = ensure_mapping_entry(&mut merge_doc, "tun");
+        if let Some(src_map) = src_tun.as_mapping() {
+            copy_mapping_key(src_map, tun_map, "route-exclude-address");
+        }
+    }
+
+    if let Some(src_mode) = merged_mode {
+        let root_map = ensure_root_mapping(&mut merge_doc);
+        root_map.insert(Value::String("mode".to_string()), src_mode);
+    }
+
+    {
+        let root_map = ensure_root_mapping(&mut merge_doc);
+        let key = Value::String("sniffer".to_string());
+        if let Some(src_sniffer) = merged_sniffer {
+            root_map.insert(key, src_sniffer);
+        } else {
+            root_map.remove(&key);
+        }
+    }
+
+    {
+        let rules_value = ensure_root_mapping(&mut merge_doc)
+            .entry(Value::String("rules".to_string()))
+            .or_insert_with(|| Value::Sequence(Vec::new()));
+        if let Value::Sequence(seq) = rules_value {
+            seq.clear();
+            seq.extend(merged.rules.iter().cloned().map(Value::String));
+        }
+    }
+
+    if let Some(src_hosts) = merged_hosts {
+        let root_map = ensure_root_mapping(&mut merge_doc);
+        root_map.insert(Value::String("hosts".to_string()), src_hosts);
+    }
+
+    fs::write(&dns_path, serde_yaml::to_string(&dns_doc)?)
+        .await
+        .with_context(|| format!("failed to write {}", dns_path.display()))?;
+    fs::write(&merge_path, serde_yaml::to_string(&merge_doc)?)
+        .await
+        .with_context(|| format!("failed to write {}", merge_path.display()))?;
+
+    println!("synced Clash Verge source config {}", dns_path.display());
+    println!("synced Clash Verge source config {}", merge_path.display());
+
+    Ok(())
+}
+
+async fn reload_clash_verge_runtime(
+    merged: &mihomo_core::ClashConfig,
+    runtime_paths: &[PathBuf],
+) -> anyhow::Result<()> {
+    use serde_json::json;
+    use serde_yaml::Value;
+
+    let external_controller = merged
+        .extra
+        .get("external-controller")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("merged config does not define external-controller"))?;
+    let (host, port) = parse_host_port(external_controller).ok_or_else(|| {
+        anyhow!(
+            "invalid external-controller value '{}' (expected host:port)",
+            external_controller
+        )
+    })?;
+
+    let host = normalize_controller_host(&host);
+    let secret = merged
+        .extra
+        .get("secret")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+
+    let runtime_path = runtime_paths
+        .iter()
+        .find(|path| path.file_name().and_then(|name| name.to_str()) == Some("config.yaml"))
+        .or_else(|| runtime_paths.first())
+        .ok_or_else(|| anyhow!("no synced Clash Verge runtime path available for reload"))?;
+
+    let client = reqwest::Client::builder().build()?;
+    let version_url = format!("http://{}:{}/version", host, port);
+    let mut version_req = client.get(&version_url);
+    if !secret.is_empty() {
+        version_req = version_req.bearer_auth(secret);
+    }
+    version_req.send().await?.error_for_status()?;
+
+    let reload_url = format!("http://{}:{}/configs", host, port);
+    let mut reload_req = client.put(&reload_url).json(&json!({
+        "path": runtime_path.display().to_string(),
+    }));
+    if !secret.is_empty() {
+        reload_req = reload_req.bearer_auth(secret);
+    }
+    reload_req.send().await?.error_for_status()?;
+
+    println!("reloaded Clash Verge runtime via {}", reload_url);
+    Ok(())
+}
+
+fn ensure_root_mapping<'a>(doc: &'a mut serde_yaml::Value) -> &'a mut serde_yaml::Mapping {
+    if !doc.is_mapping() {
+        *doc = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+    }
+    doc.as_mapping_mut().expect("mapping just initialized")
+}
+
+fn ensure_mapping_entry<'a>(
+    doc: &'a mut serde_yaml::Value,
+    key: &str,
+) -> &'a mut serde_yaml::Mapping {
+    use serde_yaml::{Mapping, Value};
+
+    let root = ensure_root_mapping(doc);
+    let entry = root
+        .entry(Value::String(key.to_string()))
+        .or_insert_with(|| Value::Mapping(Mapping::new()));
+    if !entry.is_mapping() {
+        *entry = Value::Mapping(Mapping::new());
+    }
+    entry.as_mapping_mut().expect("mapping just initialized")
+}
+
+fn copy_mapping_key(src: &serde_yaml::Mapping, dst: &mut serde_yaml::Mapping, key: &str) {
+    let yaml_key = serde_yaml::Value::String(key.to_string());
+    if let Some(value) = src.get(&yaml_key) {
+        dst.insert(yaml_key, value.clone());
+    }
 }
 
 fn resolve_template_path(paths: &AppPaths, provided: &Path) -> PathBuf {
@@ -884,26 +2643,43 @@ fn resolve_dev_rules_via(via: &str, default_via: &str, cfg: &mihomo_core::ClashC
 // - Use DOMAIN-SUFFIX for suffix matches
 const DEV_RULE_TARGETS: &[(&str, &str)] = &[
     // Git & code hosting
+    ("DOMAIN-SUFFIX", "api.github.com"),
     ("DOMAIN-SUFFIX", "github.com"),
+    ("DOMAIN-SUFFIX", "github.dev"),
+    ("DOMAIN-SUFFIX", "githubassets.com"),
     ("DOMAIN-SUFFIX", "githubusercontent.com"),
+    ("DOMAIN-SUFFIX", "raw.githubusercontent.com"),
+    ("DOMAIN-SUFFIX", "codeload.github.com"),
+    ("DOMAIN-SUFFIX", "release-assets.githubusercontent.com"),
     ("DOMAIN-SUFFIX", "gitlab.com"),
     ("DOMAIN-SUFFIX", "bitbucket.org"),
     // Language ecosystems / registries
     ("DOMAIN-SUFFIX", "registry.npmjs.org"),
+    ("DOMAIN-SUFFIX", "registry.yarnpkg.com"),
+    ("DOMAIN-SUFFIX", "registry.npmjs.com"),
     ("DOMAIN-SUFFIX", "nodejs.org"),
     ("DOMAIN-SUFFIX", "pypi.org"),
     ("DOMAIN-SUFFIX", "files.pythonhosted.org"),
+    ("DOMAIN-SUFFIX", "pythonhosted.org"),
     ("DOMAIN-SUFFIX", "crates.io"),
+    ("DOMAIN-SUFFIX", "index.crates.io"),
     ("DOMAIN-SUFFIX", "static.crates.io"),
     ("DOMAIN-SUFFIX", "rubygems.org"),
     ("DOMAIN-SUFFIX", "golang.org"),
     ("DOMAIN-SUFFIX", "go.dev"),
+    ("DOMAIN-SUFFIX", "proxy.golang.org"),
+    ("DOMAIN-SUFFIX", "sum.golang.org"),
+    ("DOMAIN-SUFFIX", "pkg.go.dev"),
     ("DOMAIN-SUFFIX", "golang.google.cn"),
     ("DOMAIN-SUFFIX", "rust-lang.org"),
+    ("DOMAIN-SUFFIX", "static.rust-lang.org"),
+    ("DOMAIN-SUFFIX", "doc.rust-lang.org"),
     // Kubernetes / cloud tooling
     ("DOMAIN-SUFFIX", "k8s.io"),
     ("DOMAIN-SUFFIX", "dl.k8s.io"),
     ("DOMAIN-SUFFIX", "k3s.io"),
+    ("DOMAIN-SUFFIX", "vultr.com"),
+    ("DOMAIN-SUFFIX", "vultrstatus.com"),
     // Containers / registries
     ("DOMAIN-SUFFIX", "docker.com"),
     ("DOMAIN-SUFFIX", "docker.io"),
@@ -914,13 +2690,27 @@ const DEV_RULE_TARGETS: &[(&str, &str)] = &[
     ("DOMAIN-SUFFIX", "quay.io"),
     // Nix infra
     ("DOMAIN", "cache.nixos.org"),
+    ("DOMAIN-SUFFIX", "channels.nixos.org"),
+    ("DOMAIN-SUFFIX", "releases.nixos.org"),
+    ("DOMAIN-SUFFIX", "nixos.org"),
+    ("DOMAIN-SUFFIX", "nix.dev"),
+    ("DOMAIN-SUFFIX", "cachix.org"),
+    ("DOMAIN-SUFFIX", "flakehub.com"),
+    ("DOMAIN-SUFFIX", "determinate.systems"),
     // AI APIs
     ("DOMAIN-SUFFIX", "api.openai.com"),
+    ("DOMAIN-SUFFIX", "api.anthropic.com"),
     ("DOMAIN-SUFFIX", "claude.ai"),
     ("DOMAIN-SUFFIX", "platform.claude.com"),
     ("DOMAIN-SUFFIX", "anthropic.com"),
     ("DOMAIN-SUFFIX", "openai.com"),
     ("DOMAIN-SUFFIX", "chatgpt.com"),
+    ("DOMAIN-SUFFIX", "openrouter.ai"),
+    ("DOMAIN-SUFFIX", "ai.google.dev"),
+    ("DOMAIN-SUFFIX", "generativelanguage.googleapis.com"),
+    ("DOMAIN-SUFFIX", "gemini.google.com"),
+    ("DOMAIN-SUFFIX", "cursor.com"),
+    ("DOMAIN-SUFFIX", "cursor.sh"),
 ];
 
 fn build_dev_rules(via: &str) -> Vec<String> {
@@ -953,20 +2743,29 @@ mod tests {
             .iter()
             .all(|rule| rule.ends_with(&format!(",{}", via))));
         for prefix in [
+            "DOMAIN-SUFFIX,api.github.com,",
             "DOMAIN-SUFFIX,github.com,",
             "DOMAIN-SUFFIX,registry.npmjs.org,",
             "DOMAIN-SUFFIX,pypi.org,",
             "DOMAIN-SUFFIX,crates.io,",
+            "DOMAIN-SUFFIX,index.crates.io,",
+            "DOMAIN-SUFFIX,proxy.golang.org,",
             "DOMAIN-SUFFIX,golang.google.cn,",
             "DOMAIN-SUFFIX,rust-lang.org,",
+            "DOMAIN-SUFFIX,static.rust-lang.org,",
             "DOMAIN-SUFFIX,k3s.io,",
+            "DOMAIN-SUFFIX,vultr.com,",
             "DOMAIN-SUFFIX,api.openai.com,",
+            "DOMAIN-SUFFIX,api.anthropic.com,",
             "DOMAIN-SUFFIX,claude.ai,",
             "DOMAIN-SUFFIX,platform.claude.com,",
             "DOMAIN-SUFFIX,anthropic.com,",
             "DOMAIN-SUFFIX,openai.com,",
             "DOMAIN-SUFFIX,chatgpt.com,",
             "DOMAIN,cache.nixos.org,",
+            "DOMAIN-SUFFIX,channels.nixos.org,",
+            "DOMAIN-SUFFIX,cachix.org,",
+            "DOMAIN-SUFFIX,openrouter.ai,",
             "DOMAIN-SUFFIX,dl.k8s.io,",
         ] {
             assert!(
@@ -980,10 +2779,11 @@ mod tests {
     fn attach_group_appends_without_duplicates() {
         use serde_yaml::Value;
 
-        let mut groups: Vec<Value> = vec![serde_yaml::from_str(
-            "name: \"BosLife\"\ntype: select\nproxies:\n  - A\n  - B\n",
-        )
-        .unwrap()];
+        let mut groups: Vec<Value> =
+            vec![
+                serde_yaml::from_str("name: \"BosLife\"\ntype: select\nproxies:\n  - A\n  - B\n")
+                    .unwrap(),
+            ];
 
         let names = vec!["B".to_string(), "jp-vultr".to_string()];
         assert!(attach_proxy_names_to_group(&mut groups, "BosLife", &names));
@@ -996,15 +2796,422 @@ mod tests {
         let items: Vec<_> = seq.iter().filter_map(|v| v.as_str()).collect();
         assert_eq!(items, vec!["A", "B", "jp-vultr"]);
     }
+
+    #[test]
+    fn parse_scutil_proxy_detects_enabled_entries() {
+        let raw = r#"
+<dictionary> {
+  HTTPEnable : 1
+  HTTPPort : 7897
+  HTTPProxy : 127.0.0.1
+  HTTPSEnable : 1
+  HTTPSPort : 7897
+  HTTPSProxy : 127.0.0.1
+  SOCKSEnable : 1
+  SOCKSPort : 7897
+  SOCKSProxy : 127.0.0.1
+}
+"#;
+
+        let entries = parse_scutil_proxy(raw);
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].kind, "HTTP");
+        assert_eq!(entries[1].kind, "HTTPS");
+        assert_eq!(entries[2].kind, "SOCKS");
+    }
+
+    #[test]
+    fn split_list_items_handles_commas_spaces_and_newlines() {
+        assert_eq!(
+            split_list_items("foo.com, bar.com\nbaz.com"),
+            vec!["foo.com", "bar.com", "baz.com"]
+        );
+    }
+
+    #[test]
+    fn extract_current_clash_verge_subscription_url_prefers_current_uid() {
+        let profiles = ClashVergeProfiles {
+            current: Some("active".to_string()),
+            items: vec![
+                ClashVergeProfileItem {
+                    uid: Some("other".to_string()),
+                    url: Some("https://example.com/other.yaml".to_string()),
+                },
+                ClashVergeProfileItem {
+                    uid: Some("active".to_string()),
+                    url: Some("https://example.com/active.yaml".to_string()),
+                },
+            ],
+        };
+
+        assert_eq!(
+            extract_current_clash_verge_subscription_url(&profiles).as_deref(),
+            Some("https://example.com/active.yaml")
+        );
+    }
+
+    #[test]
+    fn infer_connection_path_prefers_local_proxy_for_default_mixed() {
+        let record = ConnectionRecord {
+            host: Some("chatgpt.com".to_string()),
+            inbound_name: Some("DEFAULT-MIXED".to_string()),
+            source_ip: Some("127.0.0.1".to_string()),
+            chains: vec!["BosLife".to_string()],
+        };
+
+        assert_eq!(
+            infer_connection_path(&[&record]),
+            "local proxy / DEFAULT-MIXED"
+        );
+    }
+
+    #[test]
+    fn tailscale_compatibility_rewrites_fake_ip_and_adds_exclusions() {
+        use serde_yaml::Value;
+
+        let raw = r#"
+dns:
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+    - "*.local"
+tun:
+  enable: true
+"#;
+        let mut cfg: mihomo_core::ClashConfig = serde_yaml::from_str(raw).unwrap();
+
+        apply_tailscale_compatibility(&mut cfg, &[String::from("zhsjf.cn")], &[]);
+
+        let dns = cfg.extra.get("dns").and_then(|v| v.as_mapping()).unwrap();
+        assert_eq!(
+            dns.get(Value::String("fake-ip-range".into()))
+                .and_then(|v| v.as_str()),
+            Some(SAFE_FAKE_IP_RANGE)
+        );
+        let filters = dns
+            .get(Value::String("fake-ip-filter".into()))
+            .and_then(|v| v.as_sequence())
+            .unwrap();
+        for item in build_tailscale_fake_ip_bypass(&[String::from("zhsjf.cn")], &[]) {
+            assert!(filters.iter().any(|v| v.as_str() == Some(item.as_str())));
+        }
+
+        let tun = cfg.extra.get("tun").and_then(|v| v.as_mapping()).unwrap();
+        let excludes = tun
+            .get(Value::String("route-exclude-address".into()))
+            .and_then(|v| v.as_sequence())
+            .unwrap();
+        for cidr in TAILSCALE_ROUTE_EXCLUDES {
+            assert!(excludes.iter().any(|v| v.as_str() == Some(cidr)));
+        }
+    }
+
+    #[test]
+    fn tailscale_compatibility_deduplicates_entries() {
+        use serde_yaml::Value;
+
+        let raw = r#"
+dns:
+  enhanced-mode: fake-ip
+  fake-ip-range: 172.19.0.1/16
+  fake-ip-filter:
+    - +.tailscale.com
+tun:
+  route-exclude-address:
+    - 100.64.0.0/10
+"#;
+        let mut cfg: mihomo_core::ClashConfig = serde_yaml::from_str(raw).unwrap();
+
+        apply_tailscale_compatibility(&mut cfg, &[String::from("zhsjf.cn")], &[]);
+        apply_tailscale_compatibility(&mut cfg, &[String::from("zhsjf.cn")], &[]);
+
+        let dns = cfg.extra.get("dns").and_then(|v| v.as_mapping()).unwrap();
+        let filters = dns
+            .get(Value::String("fake-ip-filter".into()))
+            .and_then(|v| v.as_sequence())
+            .unwrap();
+        assert_eq!(
+            filters
+                .iter()
+                .filter(|v| v.as_str() == Some("+.tailscale.com"))
+                .count(),
+            1
+        );
+
+        let tun = cfg.extra.get("tun").and_then(|v| v.as_mapping()).unwrap();
+        let excludes = tun
+            .get(Value::String("route-exclude-address".into()))
+            .and_then(|v| v.as_sequence())
+            .unwrap();
+        assert_eq!(
+            excludes
+                .iter()
+                .filter(|v| v.as_str() == Some("100.64.0.0/10"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            cfg.rules
+                .iter()
+                .filter(|rule| rule == &&"DOMAIN-SUFFIX,tailscale.com,DIRECT".to_string())
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn tailscale_direct_rules_are_prefixed() {
+        let raw = r#"
+rules:
+  - MATCH,Proxy
+"#;
+        let mut cfg: mihomo_core::ClashConfig = serde_yaml::from_str(raw).unwrap();
+
+        apply_tailscale_compatibility(&mut cfg, &[String::from("zhsjf.cn")], &[]);
+
+        assert_eq!(cfg.rules[0], "DOMAIN-SUFFIX,tailscale.com,DIRECT");
+        assert_eq!(cfg.rules[1], "DOMAIN-SUFFIX,ts.net,DIRECT");
+        assert_eq!(cfg.rules[2], "DOMAIN-SUFFIX,tail.zhsjf.cn,DIRECT");
+        assert_eq!(cfg.rules[3], "MATCH,Proxy");
+    }
+
+    #[test]
+    fn tailscale_tailnet_suffixes_are_parameterized() {
+        assert_eq!(
+            build_tailscale_fake_ip_bypass(&[String::from("example.com")], &[]),
+            vec![
+                "+.tail.example.com".to_string(),
+                "+.tailscale.com".to_string(),
+                "+.ts.net".to_string()
+            ]
+        );
+        assert_eq!(
+            build_tailscale_direct_rules(&[String::from("example.com")], &[]),
+            vec![
+                "DOMAIN-SUFFIX,tail.example.com,DIRECT".to_string(),
+                "DOMAIN-SUFFIX,tailscale.com,DIRECT".to_string(),
+                "DOMAIN-SUFFIX,ts.net,DIRECT".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn tailscale_direct_domains_are_parameterized() {
+        assert_eq!(
+            build_tailscale_fake_ip_bypass(
+                &[String::from("example.com")],
+                &[
+                    String::from("derp.zhsjf.cn"),
+                    String::from("+.corp.example.com")
+                ]
+            ),
+            vec![
+                "+.corp.example.com".to_string(),
+                "+.tail.example.com".to_string(),
+                "+.tailscale.com".to_string(),
+                "+.ts.net".to_string(),
+                "derp.zhsjf.cn".to_string()
+            ]
+        );
+        assert_eq!(
+            build_tailscale_direct_rules(
+                &[String::from("example.com")],
+                &[
+                    String::from("derp.zhsjf.cn"),
+                    String::from("+.corp.example.com")
+                ]
+            ),
+            vec![
+                "DOMAIN,derp.zhsjf.cn,DIRECT".to_string(),
+                "DOMAIN-SUFFIX,corp.example.com,DIRECT".to_string(),
+                "DOMAIN-SUFFIX,tail.example.com,DIRECT".to_string(),
+                "DOMAIN-SUFFIX,tailscale.com,DIRECT".to_string(),
+                "DOMAIN-SUFFIX,ts.net,DIRECT".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn tailscale_managed_state_tracks_extra_route_excludes() {
+        let state = build_tailscale_managed_state(
+            &[String::from("example.com")],
+            &[String::from("derp.example.com")],
+            &[String::from("203.0.113.10/32")],
+        );
+
+        assert!(state
+            .fake_ip_filter
+            .contains(&"+.tail.example.com".to_string()));
+        assert!(state
+            .rules
+            .contains(&"DOMAIN,derp.example.com,DIRECT".to_string()));
+        assert!(state
+            .route_exclude_address
+            .contains(&"203.0.113.10/32".to_string()));
+    }
+
+    #[test]
+    fn remove_tailscale_managed_items_cleans_previous_entries() {
+        use serde_yaml::Value;
+
+        let mut cfg: mihomo_core::ClashConfig = serde_yaml::from_str(
+            r#"
+dns:
+  fake-ip-filter:
+    - ts-d.zhsjf.cn
+    - keep.example.com
+tun:
+  route-exclude-address:
+    - 114.215.124.90/32
+    - 203.0.113.10/32
+rules:
+  - DOMAIN,ts-d.zhsjf.cn,DIRECT
+  - MATCH,Proxy
+"#,
+        )
+        .unwrap();
+
+        let managed = ManagedTailscaleCompat {
+            fake_ip_filter: vec!["ts-d.zhsjf.cn".to_string()],
+            route_exclude_address: vec!["114.215.124.90/32".to_string()],
+            rules: vec!["DOMAIN,ts-d.zhsjf.cn,DIRECT".to_string()],
+        };
+
+        remove_tailscale_managed_items(&mut cfg, &managed);
+
+        let dns = cfg.extra.get("dns").and_then(|v| v.as_mapping()).unwrap();
+        let filters = dns
+            .get(Value::String("fake-ip-filter".into()))
+            .and_then(|v| v.as_sequence())
+            .unwrap();
+        assert!(filters
+            .iter()
+            .any(|v| v.as_str() == Some("keep.example.com")));
+        assert!(!filters.iter().any(|v| v.as_str() == Some("ts-d.zhsjf.cn")));
+
+        let tun = cfg.extra.get("tun").and_then(|v| v.as_mapping()).unwrap();
+        let excludes = tun
+            .get(Value::String("route-exclude-address".into()))
+            .and_then(|v| v.as_sequence())
+            .unwrap();
+        assert!(excludes
+            .iter()
+            .any(|v| v.as_str() == Some("203.0.113.10/32")));
+        assert!(!excludes
+            .iter()
+            .any(|v| v.as_str() == Some("114.215.124.90/32")));
+
+        assert_eq!(cfg.rules, vec!["MATCH,Proxy".to_string()]);
+    }
+
+    #[test]
+    fn ensure_fallback_match_rule_appends_when_missing() {
+        let mut cfg: mihomo_core::ClashConfig = serde_yaml::from_str(
+            r#"
+rules:
+  - DOMAIN-SUFFIX,tailscale.com,DIRECT
+"#,
+        )
+        .unwrap();
+
+        ensure_fallback_match_rule(&mut cfg, "BosLife");
+
+        assert_eq!(cfg.rules.last().map(String::as_str), Some("MATCH,BosLife"));
+    }
+
+    #[test]
+    fn ensure_fallback_match_rule_keeps_existing_match() {
+        let mut cfg: mihomo_core::ClashConfig = serde_yaml::from_str(
+            r#"
+rules:
+  - DOMAIN-SUFFIX,tailscale.com,DIRECT
+  - MATCH,Proxy
+"#,
+        )
+        .unwrap();
+
+        ensure_fallback_match_rule(&mut cfg, "BosLife");
+
+        assert_eq!(
+            cfg.rules,
+            vec![
+                "DOMAIN-SUFFIX,tailscale.com,DIRECT".to_string(),
+                "MATCH,Proxy".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn normalize_controller_host_maps_wildcards_to_loopback() {
+        assert_eq!(normalize_controller_host("0.0.0.0"), "127.0.0.1");
+        assert_eq!(normalize_controller_host("::"), "127.0.0.1");
+        assert_eq!(normalize_controller_host("[::]"), "127.0.0.1");
+        assert_eq!(normalize_controller_host("127.0.0.1"), "127.0.0.1");
+    }
+
+    #[test]
+    fn apply_mode_override_sets_rule_mode() {
+        let mut cfg = mihomo_core::ClashConfig::default();
+        cfg.extra
+            .insert("mode".to_string(), Value::String("global".to_string()));
+
+        apply_mode_override(&mut cfg, ConfigMode::Rule);
+
+        assert_eq!(cfg.extra.get("mode").and_then(Value::as_str), Some("rule"));
+    }
+
+    #[test]
+    fn apply_sniffer_preset_tun_installs_sniffer() {
+        let mut cfg = mihomo_core::ClashConfig::default();
+
+        apply_sniffer_preset(&mut cfg, SnifferPreset::Tun);
+
+        let sniffer = cfg
+            .extra
+            .get("sniffer")
+            .and_then(Value::as_mapping)
+            .unwrap();
+        assert_eq!(
+            sniffer
+                .get(Value::String("enable".into()))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        let sniff = sniffer
+            .get(Value::String("sniff".into()))
+            .and_then(Value::as_mapping)
+            .unwrap();
+        assert!(sniff.contains_key(Value::String("HTTP".into())));
+        assert!(sniff.contains_key(Value::String("TLS".into())));
+        assert!(sniff.contains_key(Value::String("QUIC".into())));
+    }
+
+    #[test]
+    fn apply_sniffer_preset_off_removes_sniffer() {
+        let mut cfg: mihomo_core::ClashConfig = serde_yaml::from_str(
+            r#"
+sniffer:
+  enable: true
+"#,
+        )
+        .unwrap();
+
+        apply_sniffer_preset(&mut cfg, SnifferPreset::Off);
+
+        assert!(!cfg.extra.contains_key("sniffer"));
+    }
 }
 
 fn default_base_config_path(paths: &AppPaths) -> Option<PathBuf> {
     let candidate = paths.app_config_path().with_file_name("base-config.yaml");
     if candidate.exists() {
-        Some(candidate)
-    } else {
-        None
+        return Some(candidate);
     }
+
+    paths
+        .detected_clash_verge_base_config_candidates()
+        .into_iter()
+        .find(|candidate| candidate.exists())
 }
 
 async fn ensure_parent(path: &Path) -> anyhow::Result<()> {
@@ -1012,6 +3219,22 @@ async fn ensure_parent(path: &Path) -> anyhow::Result<()> {
         fs::create_dir_all(parent).await?;
     }
     Ok(())
+}
+
+async fn backup_existing_file(path: &Path) -> anyhow::Result<Option<PathBuf>> {
+    if !fs::try_exists(path).await.unwrap_or(false) {
+        return Ok(None);
+    }
+
+    let backup = path.with_extension("mihomocli.bak");
+    fs::copy(path, &backup).await.with_context(|| {
+        format!(
+            "failed to back up {} to {}",
+            path.display(),
+            backup.display()
+        )
+    })?;
+    Ok(Some(backup))
 }
 
 const DEFAULT_TEMPLATE_CONTENT: &str = include_str!("../../../examples/cvr_template.yaml");
@@ -1036,7 +3259,7 @@ struct TestArgs {
     #[arg(long = "mihomo-bin", default_value = "mihomo")]
     mihomo_bin: String,
 
-    /// Config file to test (defaults to ~/.config/mihomocli/output/config.yaml)
+    /// Config file to test (defaults to ~/.config/mihomocli/output/clash-verge.yaml)
     #[arg(long)]
     config: Option<PathBuf>,
 
@@ -1049,7 +3272,9 @@ async fn run_test(args: TestArgs) -> anyhow::Result<()> {
     use tokio::process::Command;
 
     let paths = AppPaths::new()?;
-    let config_path = args.config.unwrap_or_else(|| paths.output_config_path());
+    let config_path = args
+        .config
+        .unwrap_or_else(|| paths.generated_clash_verge_path());
     let workdir = args
         .mihomo_dir
         .unwrap_or_else(|| paths.config_dir().to_path_buf());
@@ -1128,6 +3353,15 @@ fn parse_host_port(s: &str) -> Option<(String, u16)> {
         }
     }
     None
+}
+
+fn normalize_controller_host(host: &str) -> String {
+    let trimmed = host.trim().trim_matches(['[', ']']);
+    if trimmed == "0.0.0.0" || trimmed == "::" || trimmed == "*" || trimmed.is_empty() {
+        "127.0.0.1".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn is_url(input: &str) -> bool {
@@ -1457,7 +3691,10 @@ async fn manage_server(paths: &AppPaths, cmd: ServerCmd) -> anyhow::Result<()> {
         ServerCmd::Add(args) => {
             // Validate file exists and is readable (do not read its contents here to avoid leaks).
             if !fs::try_exists(&args.file).await.unwrap_or(false) {
-                return Err(anyhow!("manual server file does not exist: {}", args.file.display()));
+                return Err(anyhow!(
+                    "manual server file does not exist: {}",
+                    args.file.display()
+                ));
             }
 
             let entry = ManualServerRef {
@@ -1467,11 +3704,7 @@ async fn manage_server(paths: &AppPaths, cmd: ServerCmd) -> anyhow::Result<()> {
                 enabled: !args.disabled,
             };
 
-            if let Some(existing) = cfg
-                .manual_servers
-                .iter_mut()
-                .find(|s| s.name == args.name)
-            {
+            if let Some(existing) = cfg.manual_servers.iter_mut().find(|s| s.name == args.name) {
                 if args.replace {
                     *existing = entry;
                     storage::save_app_config(paths, &cfg).await?;

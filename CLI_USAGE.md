@@ -18,6 +18,8 @@ nix develop -c cargo fmt
 nix develop -c cargo clippy --all-targets --all-features
 ```
 
+If you use `direnv`/`nix-direnv` locally, this repo includes an [`.envrc`](/Users/frc/code/mihomocli/.envrc). Run `direnv allow` once, then all project commands will automatically use the flake environment when you `cd` into the repo.
+
 ## Command Overview
 
 Get top-level help and per-command details directly from the binary:
@@ -26,6 +28,8 @@ Get top-level help and per-command details directly from the binary:
 mihomo-cli --help
 mihomo-cli merge --help
 mihomo-cli init --help
+mihomo-cli doctor --help
+mihomo-cli refresh-clash-verge --help
 ```
 
 ### `merge`
@@ -38,12 +42,16 @@ mihomo-cli merge --template <template_path> [OPTIONS]
 
 Key flags:
 - `--template <PATH>`: Optional template YAML file. Defaults to the bundled `cvr_template.yaml` under `~/.config/mihomocli/templates/`.
-- `--base-config <PATH>`: Optional Clash config whose ports/dns/rules/group metadata should be inherited (e.g., `clash-verge.yaml`). If omitted, the CLI auto-loads `~/.config/mihomocli/base-config.yaml` when present.
+- `--base-config <PATH>`: Optional Clash config whose ports/dns/rules/group metadata should be inherited (e.g., `clash-verge.yaml`). If omitted, the CLI first checks `~/.config/mihomocli/base-config.yaml`, then auto-detects a local Clash Verge exported config.
 - `--subscriptions-file <PATH>`: Custom subscriptions list (defaults to `~/.config/mihomocli/subscriptions.yaml`).
 - `-s, --subscription <SRC>`: Extra source (URL or local YAML). Repeatable.
-- `--output <PATH>`: Destination for merged config. Defaults to `~/.config/mihomocli/output/config.yaml`.
+- `--output <PATH>`: Destination for merged config. Defaults to `~/.config/mihomocli/output/clash-verge.yaml`.
+- `--mode <rule|global|direct>`: Final Clash mode. Defaults to `rule`.
+- `--sniffer-preset <tun|off>`: Transparent traffic sniffer preset. Defaults to `tun`.
 - `--stdout`: Print merged YAML to stdout instead of writing to disk.
-- `--no-dev-rules`: Disable the default proxy-rule injection for common developer registries (GitHub/GitLab, Go module proxies, npm/yarn/pnpm, PyPI, crates.io, Kubernetes/k3s registries, Docker/GCR, cache.nixos.org, mainstream AI agent APIs like OpenAI/Anthropic/Gemini/Cursor/OpenCode, etc.).
+- `--sync-to-clash-verge`: After writing the normal output file, auto-detect Clash Verge's local `config.yaml`, back it up, and replace it with the generated result.
+- `--sync-to-clash-verge-sources`: Also update Clash Verge source files such as `dns_config.yaml` and `profiles/Merge.yaml` so future runtime regenerations keep the same DNS/tun settings.
+- `--no-dev-rules`: Disable the default proxy-rule injection for common developer registries and slow infra endpoints (GitHub/GitLab, Go module proxies, npm/yarn/pnpm, PyPI, crates.io, Kubernetes/k3s/Vultr, Docker/GCR, `cache.nixos.org`, `channels.nixos.org`, `cachix.org`, mainstream AI agent APIs like OpenAI/Anthropic/Gemini/Cursor/OpenRouter, etc.).
 - `--dev-rules-via <NAME>`: Proxy/group tag used by the generated dev rules (default: `Proxy`). If the default `Proxy` is not present, the CLI auto-falls back to a present group (preferring `🚀 节点选择`), then the first group, then the first proxy, and finally `DIRECT`.
 - `--dev-rules-show`: Print the generated dev rule list (even without applying it).
 - `--subscription-ua <STRING>`: HTTP User-Agent used when fetching subscriptions. Default: `clash-verge/v2.4.2`.
@@ -52,10 +60,14 @@ Key flags:
  - `--external-controller-url <HOST>`: Host/IP for the external controller (e.g., `0.0.0.0`).
  - `--external-controller-port <PORT>`: Port for the external controller (e.g., `9090`).
  - `--external-controller-secret <SECRET>`: Secret for the external controller API.
-- `--fake-ip-filter-add <PATTERN>`: Append entries to `dns.fake-ip-filter` (useful to bypass DNS hijacking when `dns.enhanced-mode: fake-ip`). Repeatable. Examples: `--fake-ip-filter-add '+.zhsjf.cn' --fake-ip-filter-add 'hs.zhsjf.cn'`.
+- `--fake-ip-filter-add <PATTERN>`: Append entries to `dns.fake-ip-filter` (useful to bypass DNS hijacking when `dns.enhanced-mode: fake-ip`). Repeatable. Examples: `--fake-ip-filter-add '+.example.com' --fake-ip-filter-add 'hs.example.com'`.
 - `--fake-ip-filter-mode <MODE>`: Set `dns.fake-ip-filter-mode` to `blacklist` or `whitelist`.
-- `--fake-ip-bypass <PATTERN>`: Clearer shorthand for exemptions. Appends to `dns.fake-ip-filter` and ensures `fake-ip-filter-mode: blacklist`. Repeatable. Use this when you want specified domains not to use fake‑ip, e.g., `--fake-ip-bypass '+.zhsjf.cn'`.
+- `--fake-ip-bypass <PATTERN>`: Clearer shorthand for exemptions. Appends to `dns.fake-ip-filter` and ensures `fake-ip-filter-mode: blacklist`. Repeatable. Use this when you want specified domains not to use fake‑ip, e.g., `--fake-ip-bypass '+.example.com'`.
 - `--k8s-cidr-exclude <CIDR>`: Append CIDRs to `tun.route-exclude-address` (repeatable). Use this for Kubernetes Pod/Service CIDRs to avoid tun-mode hijacking. Defaults include `10.42.0.0/16` and `10.43.0.0/16`.
+- `--route-exclude-address-add <CIDR>`: Append arbitrary CIDRs to `tun.route-exclude-address` (repeatable). Use this for specific remote IPs/subnets that must not go through mihomo TUN, such as a self-hosted DERP IP.
+- `--tailscale-compatible`: Keep fake-ip and tun compatible with Tailscale by moving unsafe fake-ip ranges off `198.18.0.0/16`, bypassing Tailscale domains from fake-ip, and excluding tailnet CIDRs from tun routing.
+- `--tailscale-tailnet-suffix <SUFFIX>`: Add a custom tailnet suffix so `tail.<suffix>` is also bypassed from fake-ip and forced `DIRECT`. Repeatable.
+- `--tailscale-direct-domain <DOMAIN>`: Add extra domains or suffixes that should bypass fake-ip and be forced `DIRECT` under `--tailscale-compatible`. Repeatable. Examples: `--tailscale-direct-domain derp.example.com` or `--tailscale-direct-domain +.corp.example.com`.
  - `--dry-run`: Do not write output; print a concise summary (proxies/groups/rules counts, fake‑ip mode + number of bypass entries requested, dev‑rules via and count, external-controller presence).
 
 ### `init`
@@ -71,13 +83,130 @@ What it does:
 - Seeds: `~/.config/mihomocli/templates/cvr_template.yaml` if not present
 - Does not download resources to avoid first-run network stalls
 
+### `doctor`
+
+Inspect the current local desktop state without changing anything.
+
+```bash
+mihomo-cli doctor
+```
+
+What it reports:
+- local Clash Verge runtime file state (`mode`, `tun`, `sniffer`, fake-ip range, route excludes)
+- whether `config.yaml` and `clash-verge.yaml` currently agree on the important runtime fields
+- macOS system proxy status via `scutil --proxy`
+- Tailscale CLI status and health warnings when available
+- controller connectivity and a live connection sample when the Mihomo controller is reachable
+
+Useful flags:
+- `--show-connections`: Include a short live controller connection sample. Defaults to on.
+- `--focus-domain <DOMAIN>`: Highlight specific domains in the live connection sample. Repeatable.
+
+Example:
+
+```bash
+mihomo-cli doctor \
+  --focus-domain chatgpt.com \
+  --focus-domain api.anthropic.com
+```
+
+This is especially useful when you want to answer:
+- Is the machine currently in `rule + tun + sniffer`?
+- Are system proxies still enabled?
+- Is the current app session entering Mihomo via `DEFAULT-MIXED` or via TUN?
+
+### `refresh-clash-verge`
+
+Refresh the local Clash Verge setup using the currently active remote subscription from Clash Verge itself.
+
+```bash
+mihomo-cli refresh-clash-verge
+```
+
+What it does:
+- detects Clash Verge's `profiles.yaml`
+- resolves the active remote subscription URL
+- runs the native CLI refresh flow
+- enables `--sync-to-clash-verge` and `--sync-to-clash-verge-sources`
+- applies the usual desktop defaults of `--mode rule` and `--sniffer-preset tun`
+
+Useful flags:
+- `mihomo-cli refresh-clash-verge "https://example.com/sub.yaml"`: override the detected subscription URL explicitly
+- `--mode <rule|global|direct>`: override the final mode
+- `--sniffer-preset <tun|off>`: override the sniffer preset
+- `--tailscale-tailnet-suffix <SUFFIX>`: repeatable
+- `--tailscale-direct-domain <DOMAIN>`: repeatable
+- `--route-exclude-address-add <CIDR>`: repeatable
+- `--no-tailscale-compatible`: disable the Tailscale compatibility patch set
+- `--dry-run`: preview the merge without writing files
+
+Environment fallbacks kept for compatibility with earlier shell-based usage:
+- `MIHOMOCLI_TAILSCALE_SUFFIXES` or `MIHOMOCLI_TAILSCALE_SUFFIX`
+- `MIHOMOCLI_TAILSCALE_DIRECT_DOMAINS`
+- `MIHOMOCLI_TAILSCALE_DIRECT_CIDRS`
+- `MIHOMOCLI_MODE`
+- `MIHOMOCLI_SNIFFER_PRESET`
+
+Recommended long-term config source:
+
+```yaml
+# ~/.config/mihomocli/app.yaml
+tailscale_compat_defaults:
+  tailnet_suffixes:
+    - example.com
+  direct_domains:
+    - hs.example.com
+    - derp.example.com
+  route_exclude_address:
+    - 203.0.113.10/32
+```
+
+With that in place, `refresh-clash-verge` can stay zero-argument while tailnet
+and DERP values remain site-owned rather than hardcoded in scripts.
+
+## Recommended One-Command Refresh
+
+After refreshing the subscription inside Clash Verge itself, run:
+
+```bash
+cd ~/code/mihomocli
+nix develop -c cargo run -p mihomo-cli -- refresh-clash-verge
+```
+
+By default the command reads the current remote subscription URL from Clash Verge's
+local `profiles.yaml` and then runs the equivalent of:
+
+```bash
+nix develop -c cargo run -p mihomo-cli -- merge --subscription "<current-url>" --mode rule --sniffer-preset tun --tailscale-compatible --sync-to-clash-verge --sync-to-clash-verge-sources
+```
+
+For a Tailscale-safe refresh that also updates Clash Verge source files:
+
+```bash
+nix develop -c cargo run -p mihomo-cli -- refresh-clash-verge --tailscale-tailnet-suffix example.com --tailscale-direct-domain derp.example.com --route-exclude-address-add 203.0.113.10/32
+```
+
+To explicitly force the common desktop setup of `rule + tun sniffer`:
+
+```bash
+nix develop -c cargo run -p mihomo-cli -- refresh-clash-verge --mode rule --sniffer-preset tun
+```
+
+You can also override the subscription URL explicitly:
+
+```bash
+nix develop -c cargo run -p mihomo-cli -- refresh-clash-verge "https://example.com/sub.yaml"
+```
+
+If you still have old automation calling `./scripts/refresh_clash_verge.sh`, it now only forwards to this CLI command and prints a deprecation notice.
+
 ## Configuration Files
 
 Runtime directories (auto-created):
 - Templates: `~/.config/mihomocli/templates/` (auto-populated with `cvr_template.yaml` on first run)
 - Subscriptions list: `~/.config/mihomocli/subscriptions.yaml`
 - Cache: `~/.cache/mihomocli/subscriptions/`
-- Output: `~/.config/mihomocli/output/config.yaml`
+- Output: `~/.config/mihomocli/output/clash-verge.yaml`
 - Resources (Country.mmdb, geoip.dat, geosite.dat): `~/.config/mihomocli/resources/` (use `mihomo -d ~/.config/mihomocli/resources ...`)
 
 ### Resource mirrors and manual preload
@@ -109,7 +238,7 @@ You can validate the generated config with the real mihomo binary:
 mihomo-cli test \
   --mihomo-bin mihomo \
   --mihomo-dir ~/.config/mihomocli \
-  --config ~/.config/mihomocli/output/config.yaml
+  --config ~/.config/mihomocli/output/clash-verge.yaml
 ```
 
 By default, `mihomo-cli test` uses `mihomo` from `PATH`, `~/.config/mihomocli` as `-d`, and the default output config path.

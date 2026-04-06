@@ -14,6 +14,8 @@
 ## Quick Start
 Tip: Use the Nix dev shell for a pinned Rust toolchain. Either enter an interactive shell or invoke Cargo via `nix develop -c`.
 
+This repo also ships an [`.envrc`](/Users/frc/code/mihomocli/.envrc) for `direnv`/`nix-direnv`, so on this machine you can simply run `direnv allow` once and then rely on the local project environment automatically.
+
 ```
 nix develop
 ```
@@ -24,11 +26,16 @@ mihomo-cli init
 ```
 
 ```bash
+# One-time setup for automatic local env loading
+direnv allow
+```
+
+```bash
 # Build (one‑shot)
 nix develop -c cargo build -p mihomo-cli
 
 # Merge with default (bundled) template and remote subscription (output defaults to
-# ~/.config/mihomocli/output/config.yaml). The default User-Agent is
+# ~/.config/mihomocli/output/clash-verge.yaml). The default User-Agent is
 # 'clash-verge/v2.4.2', which often yields Clash YAML with rules.
 mihomo-cli merge \
   --subscription "https://example.com/subscription"
@@ -38,9 +45,17 @@ mihomo-cli merge \
   --subscription "https://example.com/base64" \
   --subscription-allow-base64
 
-# Want clash-verge-rev parity? Drop your clash-verge.yaml at
-# ~/.config/mihomocli/base-config.yaml (or pass --base-config) so ports/dns/
-# rules/groups are inherited automatically.
+# Want clash-verge-rev parity? Either drop your clash-verge.yaml at
+# ~/.config/mihomocli/base-config.yaml, or let mihomo-cli auto-detect the local
+# Clash Verge app directory and exported config.
+
+# To also replace Clash Verge's runtime config.yaml in one step:
+mihomo-cli merge \
+  --use-last \
+  --sync-to-clash-verge
+
+# Practical daily flow after clicking refresh in Clash Verge:
+nix develop -c cargo run -p mihomo-cli -- refresh-clash-verge
 ```
 
 ## End-to-End Test (UA feature)
@@ -61,7 +76,7 @@ mihomo-cli merge \
 
 Expected results:
 - Resources `Country.mmdb`, `geoip.dat`, `geosite.dat` are auto-downloaded into `~/.config/mihomocli/resources/` if missing.
-- Output written to `~/.config/mihomocli/output/config.yaml` unless `--stdout` is used.
+- Output written to `~/.config/mihomocli/output/clash-verge.yaml` unless `--stdout` is used.
 - Merged YAML contains many DOMAIN-SUFFIX rules from the provider.
 
 ## CVR‑Aligned Template (no base-config)
@@ -87,7 +102,7 @@ Kubernetes + tun note
 Run Mihomo with the generated configuration and resources:
 
 ```bash
-mihomo -d ~/.config/mihomocli/resources -f ~/.config/mihomocli/output/config.yaml
+mihomo -d ~/.config/mihomocli/resources -f ~/.config/mihomocli/output/clash-verge.yaml
 ```
 
 Or validate quickly using the built-in test helper (wraps `mihomo -t`):
@@ -95,7 +110,7 @@ Or validate quickly using the built-in test helper (wraps `mihomo -t`):
 ```
 nix develop -c mihomo-cli test \
   --mihomo-dir ~/.config/mihomocli \
-  --config ~/.config/mihomocli/output/config.yaml
+  --config ~/.config/mihomocli/output/clash-verge.yaml
 ```
 
 ## Server Bootstrap (first run)
@@ -139,7 +154,8 @@ Notes:
 
 - `--subscription-ua <STRING>`: HTTP User-Agent used to fetch subscriptions. Default: `clash-verge/v2.4.2`.
 - `--subscription-allow-base64`: Enable decoding base64/share-link subscriptions (trojan/vmess/ss). Disabled by default to prefer native Clash YAML from providers.
-- `--no-dev-rules [--dev-rules-via <NAME>]`: Dev rules are enabled by default and prepend proxy rules for common developer registries (GitHub/GitLab, Go proxy mirrors, npm/yarn/pnpm, PyPI, crates.io, Kubernetes/k3s registries, Docker/GCR, cache.nixos.org, AI agent APIs such as OpenAI/Claude/Gemini/Cursor/OpenCode, etc.). Override the target group with `--dev-rules-via` or disable via `--no-dev-rules`. If the requested group `Proxy` is not present in the merged config, the CLI falls back to an existing group (preferring `🚀 节点选择`), otherwise the first group, then the first proxy, and finally `DIRECT`.
+- `--sync-to-clash-verge`: After writing the normal output file, auto-detect Clash Verge's local `config.yaml`, back it up, and replace it with the generated config.
+- `--no-dev-rules [--dev-rules-via <NAME>]`: Dev rules are enabled by default and prepend proxy rules for common developer registries and slow infra endpoints (GitHub/GitLab, npm/yarn, PyPI, crates.io, Go proxy, Vultr, Docker/GCR, `cache.nixos.org`, `channels.nixos.org`, `cachix.org`, AI agent APIs such as OpenAI/Claude/Gemini/Cursor/OpenRouter, etc.). Override the target group with `--dev-rules-via` or disable via `--no-dev-rules`. If the requested group `Proxy` is not present in the merged config, the CLI falls back to an existing group (preferring `🚀 节点选择`), otherwise the first group, then the first proxy, and finally `DIRECT`.
 - `--dev-rules-show`: Print the generated dev rule list (useful for inspection without modifying output).
 - External controller settings: `--external-controller-url <HOST>`, `--external-controller-port <PORT>`, and `--external-controller-secret <SECRET>` to set `external-controller` and `secret` in the merged output.
 
@@ -151,14 +167,14 @@ Notes:
 
 - Recommended for “指定的域名不走 fake‑ip”:
   - `--fake-ip-bypass <PATTERN>`: Append exemptions to `dns.fake-ip-filter` and ensure `fake-ip-filter-mode: blacklist`. Repeatable.
-  - Examples: `--fake-ip-bypass '+.zhsjf.cn' --fake-ip-bypass 'hs.zhsjf.cn'`.
+  - Examples: `--fake-ip-bypass '+.example.com' --fake-ip-bypass 'hs.example.com'`.
 
 - Advanced (optional):
   - `--fake-ip-filter-add <PATTERN>`: Append entries to `dns.fake-ip-filter` without changing mode.
   - `--fake-ip-filter-mode <blacklist|whitelist>`: Explicitly set `dns.fake-ip-filter-mode`.
 
 - Validate at runtime (with Mihomo running and DNS hooked):
-  - `getent ahosts hs.zhsjf.cn`
+  - `getent ahosts hs.example.com`
     - Exempted: returns real public IPs (not in `198.18.0.0/16`).
     - Not exempted: returns an IP inside `198.18.0.0/16` (default `fake-ip-range`).
 
@@ -169,10 +185,26 @@ Preview what would be generated, without writing the file:
 ```bash
 mihomo-cli merge \
   -s https://example.com/sub.yaml \
-  --fake-ip-bypass '+.zhsjf.cn' \
-  --fake-ip-bypass 'hs.zhsjf.cn' \
+  --fake-ip-bypass '+.example.com' \
+  --fake-ip-bypass 'hs.example.com' \
   --dev-rules-via Proxy \
   --dry-run
+```
+
+### Site-owned Tailscale defaults
+
+Keep tailnet and DERP values in `~/.config/mihomocli/app.yaml` so refresh flows
+do not depend on shell scripts or hardcoded examples:
+
+```yaml
+tailscale_compat_defaults:
+  tailnet_suffixes:
+    - example.com
+  direct_domains:
+    - hs.example.com
+    - derp.example.com
+  route_exclude_address:
+    - 203.0.113.10/32
 ```
 
 Typical output:
@@ -181,9 +213,9 @@ Typical output:
 dry-run summary:
 - proxies: 182, groups: 9, rules: 1203
 - fake-ip: mode=blacklist, filter+=2 (requested), total=15
-- dev-rules: enabled=true, via=Proxy, added=14
+- dev-rules: enabled=true, via=Proxy, added=36
 - external-controller: 127.0.0.1:9097, secret=unset
-- output: would write to /home/<you>/.config/mihomocli/output/config.yaml (suppressed by --dry-run)
+- output: would write to /home/<you>/.config/mihomocli/output/clash-verge.yaml (suppressed by --dry-run)
 ```
 
 ## Cache and Quick Rules
@@ -200,6 +232,24 @@ dry-run summary:
   - Remove: `mihomo-cli manage custom remove --domain cache.nixos.org --via proxy`
   - Check: `mihomo-cli manage check --domain github.com`  # prints `proxy` or `direct`
   - Dev domains list: `mihomo-cli manage dev-list [--format plain|yaml|json]`
+
+## Recommended Daily Flow
+
+After you click refresh for the active subscription in Clash Verge, run:
+
+```bash
+cd ~/code/mihomocli
+nix develop -c cargo run -p mihomo-cli -- refresh-clash-verge
+```
+
+This command:
+- reads the currently active Clash Verge remote subscription URL from `profiles.yaml`
+- regenerates the final config with your enhanced dev rules
+- backs up the existing Clash Verge runtime config
+- syncs the generated YAML back into Clash Verge
+- keeps the platform-specific Clash Verge path detection inside Rust code instead of shell glue
+
+If you still have older automation calling `./scripts/refresh_clash_verge.sh`, it now only forwards to the CLI command and prints a deprecation notice.
 
 ## Repository Layout
 - `crates/core`: Clash models, merge logic, subscription parsing, storage helpers
