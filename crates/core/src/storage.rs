@@ -216,7 +216,7 @@ pub async fn save_subscription_list(
 
 // App configuration (simple key-value plus custom rules)
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct AppConfig {
     #[serde(default)]
     pub last_subscription_url: Option<String>,

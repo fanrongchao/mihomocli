@@ -18,10 +18,13 @@ use tracing_subscriber::EnvFilter;
 const SAFE_FAKE_IP_RANGE: &str = "172.19.0.1/16";
 const TAILSCALE_BASE_FAKE_IP_BYPASS: [&str; 2] = ["+.tailscale.com", "+.ts.net"];
 const TAILSCALE_ROUTE_EXCLUDES: [&str; 2] = ["100.64.0.0/10", "fd7a:115c:a1e0::/48"];
-const TAILSCALE_BASE_DIRECT_RULES: [&str; 2] = [
+const TAILSCALE_BASE_DIRECT_RULES: [&str; 4] = [
     "DOMAIN-SUFFIX,tailscale.com,DIRECT",
     "DOMAIN-SUFFIX,ts.net,DIRECT",
+    "IP-CIDR,100.64.0.0/10,DIRECT",
+    "IP-CIDR6,fd7a:115c:a1e0::/48,DIRECT",
 ];
+const TAILSCALE_SYSTEM_PROXY_BYPASS_BASE: [&str; 1] = ["100.64.0.0/10"];
 
 #[derive(Parser)]
 #[command(
@@ -1803,6 +1806,8 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
     let paths = AppPaths::new()?;
     paths.ensure_runtime_dirs().await?;
     let mut app_cfg = storage::load_app_config(&paths).await?;
+    let original_app_cfg = app_cfg.clone();
+    let previous_managed_tailscale = app_cfg.managed_tailscale_compat.clone();
 
     // Mimic clash-verge UA so some providers return Clash YAML (with rules)
     let ua = args
@@ -2288,7 +2293,19 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
     // Update caches after successful merge
     if let Some(url) = used_url.take() {
         app_cfg.last_subscription_url = Some(url);
+    }
+
+    if app_cfg != original_app_cfg {
         storage::save_app_config(&paths, &app_cfg).await?;
+    }
+
+    if args.sync_to_clash_verge {
+        if let Err(err) = sync_system_proxy_bypass(
+            previous_managed_tailscale.as_ref(),
+            app_cfg.managed_tailscale_compat.as_ref(),
+        ) {
+            warn!(error = %err, "failed to sync system proxy bypass entries");
+        }
     }
 
     Ok(())
@@ -2505,6 +2522,276 @@ fn build_tailscale_managed_state(
         route_exclude_address,
         rules: build_tailscale_direct_rules(tailnet_suffixes, direct_domains),
     }
+}
+
+fn build_system_proxy_bypass_entries(
+    tailnet_suffixes: &[String],
+    direct_domains: &[String],
+) -> Vec<String> {
+    let mut items: Vec<String> = TAILSCALE_SYSTEM_PROXY_BYPASS_BASE
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+
+    for suffix in tailnet_suffixes {
+        if let Some(suffix) = normalize_direct_domain(suffix) {
+            items.push(format!("*.tail.{suffix}"));
+        }
+    }
+
+    for domain in direct_domains {
+        if let Some(domain) = normalize_direct_domain(domain) {
+            if let Some(stripped) = domain.strip_prefix("+.") {
+                items.push(format!("*.{stripped}"));
+            } else {
+                items.push(domain);
+            }
+        }
+    }
+
+    items.sort();
+    items.dedup();
+    items
+}
+
+fn normalize_proxy_bypass_token(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
+fn merge_proxy_bypass_entries(
+    current: Vec<String>,
+    previous_managed: &[String],
+    desired: &[String],
+) -> Vec<String> {
+    let stale: HashSet<String> = previous_managed
+        .iter()
+        .map(|item| normalize_proxy_bypass_token(item))
+        .collect();
+    let desired_normalized: HashSet<String> = desired
+        .iter()
+        .map(|item| normalize_proxy_bypass_token(item))
+        .collect();
+
+    let mut merged = Vec::new();
+    let mut seen = HashSet::new();
+
+    for item in current {
+        let normalized = normalize_proxy_bypass_token(&item);
+        if stale.contains(&normalized) {
+            continue;
+        }
+        if seen.insert(normalized) {
+            merged.push(item);
+        }
+    }
+
+    for item in desired {
+        let normalized = normalize_proxy_bypass_token(item);
+        if desired_normalized.contains(&normalized) && seen.insert(normalized) {
+            merged.push(item.clone());
+        }
+    }
+
+    merged
+}
+
+fn derive_system_proxy_bypass_entries_from_managed(
+    managed: Option<&ManagedTailscaleCompat>,
+) -> Vec<String> {
+    managed
+        .map(|state| {
+            build_system_proxy_bypass_entries(
+                &derive_tailnet_suffixes_from_managed(state),
+                &derive_direct_domains_from_managed(state),
+            )
+        })
+        .unwrap_or_default()
+}
+
+fn sync_system_proxy_bypass(
+    previous_managed: Option<&ManagedTailscaleCompat>,
+    current_managed: Option<&ManagedTailscaleCompat>,
+) -> anyhow::Result<()> {
+    let previous_entries = derive_system_proxy_bypass_entries_from_managed(previous_managed);
+    let desired_entries = derive_system_proxy_bypass_entries_from_managed(current_managed);
+
+    if cfg!(target_os = "macos") {
+        return sync_macos_proxy_bypass_entries(&previous_entries, &desired_entries);
+    }
+
+    if cfg!(target_os = "windows") {
+        return sync_windows_proxy_bypass_entries(&previous_entries, &desired_entries);
+    }
+
+    Ok(())
+}
+
+fn list_macos_network_services() -> anyhow::Result<Vec<String>> {
+    let output = std::process::Command::new("networksetup")
+        .arg("-listallnetworkservices")
+        .output()
+        .context("failed to list macOS network services")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!(
+            "networksetup -listallnetworkservices failed: {}",
+            trimmed_single_line(&stderr).unwrap_or_else(|| "unknown error".to_string())
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let services = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter(|line| !line.starts_with("An asterisk"))
+        .filter(|line| !line.starts_with('*'))
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+
+    Ok(services)
+}
+
+fn get_macos_proxy_bypass_domains(service: &str) -> anyhow::Result<Vec<String>> {
+    let output = std::process::Command::new("networksetup")
+        .args(["-getproxybypassdomains", service])
+        .output()
+        .with_context(|| format!("failed to get proxy bypass domains for {service}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!(
+            "networksetup -getproxybypassdomains {} failed: {}",
+            service,
+            trimmed_single_line(&stderr).unwrap_or_else(|| "unknown error".to_string())
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let domains = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+
+    Ok(domains)
+}
+
+fn set_macos_proxy_bypass_domains(service: &str, domains: &[String]) -> anyhow::Result<()> {
+    let mut command = std::process::Command::new("networksetup");
+    command.arg("-setproxybypassdomains").arg(service);
+    for domain in domains {
+        command.arg(domain);
+    }
+
+    let output = command
+        .output()
+        .with_context(|| format!("failed to set proxy bypass domains for {service}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!(
+            "networksetup -setproxybypassdomains {} failed: {}",
+            service,
+            trimmed_single_line(&stderr).unwrap_or_else(|| "unknown error".to_string())
+        ));
+    }
+
+    Ok(())
+}
+
+fn sync_macos_proxy_bypass_entries(
+    previous_managed: &[String],
+    desired: &[String],
+) -> anyhow::Result<()> {
+    for service in list_macos_network_services()? {
+        let current = get_macos_proxy_bypass_domains(&service)?;
+        let merged = merge_proxy_bypass_entries(current.clone(), previous_managed, desired);
+        if merged != current {
+            set_macos_proxy_bypass_domains(&service, &merged)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_windows_proxy_override(raw: &str) -> Vec<String> {
+    raw.lines()
+        .find(|line| line.contains("ProxyOverride"))
+        .and_then(|line| {
+            let mut parts = line.split_whitespace();
+            let _name = parts.next()?;
+            let _type = parts.next()?;
+            Some(parts.collect::<Vec<_>>().join(" "))
+        })
+        .map(|value| {
+            value
+                .split(';')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn get_windows_proxy_override_entries() -> anyhow::Result<Vec<String>> {
+    let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings";
+    let output = std::process::Command::new("reg")
+        .args(["query", key, "/v", "ProxyOverride"])
+        .output()
+        .context("failed to query Windows proxy override list")?;
+
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+
+    Ok(parse_windows_proxy_override(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
+}
+
+fn set_windows_proxy_override_entries(entries: &[String]) -> anyhow::Result<()> {
+    let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings";
+    let value = entries.join(";");
+    let output = std::process::Command::new("reg")
+        .args([
+            "add",
+            key,
+            "/v",
+            "ProxyOverride",
+            "/t",
+            "REG_SZ",
+            "/d",
+            &value,
+            "/f",
+        ])
+        .output()
+        .context("failed to update Windows proxy override list")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!(
+            "reg add ProxyOverride failed: {}",
+            trimmed_single_line(&stderr).unwrap_or_else(|| "unknown error".to_string())
+        ));
+    }
+
+    Ok(())
+}
+
+fn sync_windows_proxy_bypass_entries(
+    previous_managed: &[String],
+    desired: &[String],
+) -> anyhow::Result<()> {
+    let current = get_windows_proxy_override_entries()?;
+    let merged = merge_proxy_bypass_entries(current.clone(), previous_managed, desired);
+    if merged != current {
+        set_windows_proxy_override_entries(&merged)?;
+    }
+    Ok(())
 }
 
 fn remove_tailscale_managed_items(
@@ -3339,7 +3626,9 @@ rules:
         assert_eq!(cfg.rules[0], "DOMAIN-SUFFIX,tail.zhsjf.cn,DIRECT");
         assert_eq!(cfg.rules[1], "DOMAIN-SUFFIX,tailscale.com,DIRECT");
         assert_eq!(cfg.rules[2], "DOMAIN-SUFFIX,ts.net,DIRECT");
-        assert_eq!(cfg.rules[3], "MATCH,Proxy");
+        assert_eq!(cfg.rules[3], "IP-CIDR,100.64.0.0/10,DIRECT");
+        assert_eq!(cfg.rules[4], "IP-CIDR6,fd7a:115c:a1e0::/48,DIRECT");
+        assert_eq!(cfg.rules[5], "MATCH,Proxy");
     }
 
     #[test]
@@ -3357,7 +3646,9 @@ rules:
             vec![
                 "DOMAIN-SUFFIX,tail.example.com,DIRECT".to_string(),
                 "DOMAIN-SUFFIX,tailscale.com,DIRECT".to_string(),
-                "DOMAIN-SUFFIX,ts.net,DIRECT".to_string()
+                "DOMAIN-SUFFIX,ts.net,DIRECT".to_string(),
+                "IP-CIDR,100.64.0.0/10,DIRECT".to_string(),
+                "IP-CIDR6,fd7a:115c:a1e0::/48,DIRECT".to_string()
             ]
         );
     }
@@ -3393,7 +3684,66 @@ rules:
                 "DOMAIN-SUFFIX,corp.example.com,DIRECT".to_string(),
                 "DOMAIN-SUFFIX,tail.example.com,DIRECT".to_string(),
                 "DOMAIN-SUFFIX,tailscale.com,DIRECT".to_string(),
-                "DOMAIN-SUFFIX,ts.net,DIRECT".to_string()
+                "DOMAIN-SUFFIX,ts.net,DIRECT".to_string(),
+                "IP-CIDR,100.64.0.0/10,DIRECT".to_string(),
+                "IP-CIDR6,fd7a:115c:a1e0::/48,DIRECT".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn system_proxy_bypass_entries_include_tailnet_and_direct_domains() {
+        assert_eq!(
+            build_system_proxy_bypass_entries(
+                &[String::from("zhsjf.cn")],
+                &[
+                    String::from("airs.zhsjf.cn"),
+                    String::from("+.corp.example.com")
+                ]
+            ),
+            vec![
+                "*.corp.example.com".to_string(),
+                "*.tail.zhsjf.cn".to_string(),
+                "100.64.0.0/10".to_string(),
+                "airs.zhsjf.cn".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn merge_proxy_bypass_entries_replaces_previous_managed_values() {
+        let current = vec![
+            "127.0.0.1".to_string(),
+            "mihomo.zhsjf.cn".to_string(),
+            "old.example.com".to_string(),
+        ];
+        let previous = vec!["mihomo.zhsjf.cn".to_string(), "old.example.com".to_string()];
+        let desired = vec!["mihomo.zhsjf.cn".to_string(), "airs.zhsjf.cn".to_string()];
+
+        assert_eq!(
+            merge_proxy_bypass_entries(current, &previous, &desired),
+            vec![
+                "127.0.0.1".to_string(),
+                "mihomo.zhsjf.cn".to_string(),
+                "airs.zhsjf.cn".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_windows_proxy_override_splits_semicolon_list() {
+        let raw = r#"
+HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Internet Settings
+    ProxyOverride    REG_SZ    localhost;<local>;100.64.0.0/10;airs.zhsjf.cn
+"#;
+
+        assert_eq!(
+            parse_windows_proxy_override(raw),
+            vec![
+                "localhost".to_string(),
+                "<local>".to_string(),
+                "100.64.0.0/10".to_string(),
+                "airs.zhsjf.cn".to_string(),
             ]
         );
     }

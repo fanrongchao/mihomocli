@@ -230,6 +230,19 @@ tailscale_compat_defaults:
     - 203.0.113.10/32
 ```
 
+When `tailscale-compatible` is enabled, `mihomo-cli` now treats Tailscale in
+two layers:
+
+- Cross-platform Mihomo behavior:
+  - add fake-ip bypass entries for the configured tailnet suffixes/direct domains
+  - add `DIRECT` domain rules for those names
+  - add tailnet CIDR `DIRECT` rules for `100.64.0.0/10` and `fd7a:115c:a1e0::/48`
+  - keep those same CIDRs in `tun.route-exclude-address`
+- Platform adapters:
+  - macOS: sync tailnet-only hostnames into system proxy bypass domains
+  - Windows: sync tailnet-only hostnames into WinINET `ProxyOverride`
+  - Linux: no automatic system-proxy mutation (no single desktop-wide standard)
+
 Typical output:
 
 ```
