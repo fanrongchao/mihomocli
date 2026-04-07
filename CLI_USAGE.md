@@ -171,6 +171,7 @@ What it does:
 - runs the native CLI refresh flow
 - enables `--sync-to-clash-verge` and `--sync-to-clash-verge-sources`
 - applies the usual desktop defaults of `--mode rule` and `--sniffer-preset tun`
+- explicitly restores `tun.enable: true` in the generated/runtime config so a Clash Verge reinstall or GUI drift can be pulled back to the expected desktop state in one command
 
 Useful flags:
 - `mihomo-cli refresh-clash-verge "https://example.com/sub.yaml"`: override the detected subscription URL explicitly
@@ -205,6 +206,19 @@ tailscale_compat_defaults:
 
 With that in place, `refresh-clash-verge` can stay zero-argument while tailnet
 and DERP values remain site-owned rather than hardcoded in scripts.
+
+Self-recovery command after Clash Verge reinstall or runtime drift:
+
+```bash
+cd ~/code/mihomocli
+nix develop -c cargo run -p mihomo-cli -- refresh-clash-verge
+```
+
+That command is expected to restore:
+- the active subscription content
+- desktop defaults like `mode=rule` and `sniffer=tun`
+- `tun.enable=true`
+- Clash Verge runtime/source file alignment
 
 ## Recommended One-Command Refresh
 

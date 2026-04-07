@@ -1933,6 +1933,7 @@ async fn run_merge(args: MergeArgs) -> anyhow::Result<()> {
     }
 
     apply_mode_override(&mut merged, args.mode);
+    apply_tun_enabled(&mut merged, true);
     apply_sniffer_preset(&mut merged, args.sniffer_preset);
 
     if let Some(previous) = app_cfg.managed_tailscale_compat.as_ref() {
@@ -2673,6 +2674,18 @@ fn apply_mode_override(cfg: &mut mihomo_core::ClashConfig, mode: ConfigMode) {
         .insert("mode".to_string(), Value::String(mode.as_str().to_string()));
 }
 
+fn apply_tun_enabled(cfg: &mut mihomo_core::ClashConfig, enabled: bool) {
+    use serde_yaml::{Mapping, Value};
+
+    let tun_value = cfg
+        .extra
+        .entry("tun".to_string())
+        .or_insert_with(|| Value::Mapping(Mapping::new()));
+    if let Value::Mapping(tun_map) = tun_value {
+        tun_map.insert(Value::String("enable".to_string()), Value::Bool(enabled));
+    }
+}
+
 fn apply_sniffer_preset(cfg: &mut mihomo_core::ClashConfig, preset: SnifferPreset) {
     match preset {
         SnifferPreset::Off => {
@@ -2751,6 +2764,7 @@ async fn sync_clash_verge_source_configs(
     if let Some(ref src_tun) = merged_tun {
         let tun_map = ensure_mapping_entry(&mut dns_doc, "tun");
         if let Some(src_map) = src_tun.as_mapping() {
+            copy_mapping_key(src_map, tun_map, "enable");
             copy_mapping_key(src_map, tun_map, "route-exclude-address");
         }
     }
@@ -2765,6 +2779,7 @@ async fn sync_clash_verge_source_configs(
     if let Some(ref src_tun) = merged_tun {
         let tun_map = ensure_mapping_entry(&mut merge_doc, "tun");
         if let Some(src_map) = src_tun.as_mapping() {
+            copy_mapping_key(src_map, tun_map, "enable");
             copy_mapping_key(src_map, tun_map, "route-exclude-address");
         }
     }
@@ -3533,6 +3548,20 @@ rules:
         apply_mode_override(&mut cfg, ConfigMode::Rule);
 
         assert_eq!(cfg.extra.get("mode").and_then(Value::as_str), Some("rule"));
+    }
+
+    #[test]
+    fn apply_tun_enabled_sets_true() {
+        let mut cfg = mihomo_core::ClashConfig::default();
+
+        apply_tun_enabled(&mut cfg, true);
+
+        let tun = cfg.extra.get("tun").and_then(Value::as_mapping).unwrap();
+        assert_eq!(
+            tun.get(Value::String("enable".into()))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
     }
 
     #[test]
