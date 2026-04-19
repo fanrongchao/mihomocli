@@ -213,11 +213,11 @@ adapters:
 - Mihomo core:
   - fake-ip bypass for configured tailnet suffixes and direct domains
   - `DIRECT` domain rules for those names
-  - tailnet CIDR `DIRECT` rules for `100.64.0.0/10` and `fd7a:115c:a1e0::/48`
+  - tailnet/service `DIRECT` rules for `100.64.0.0/10`, `100.100.100.100/32`, and `fd7a:115c:a1e0::/48`
   - `tun.route-exclude-address` exclusions for the same CIDRs
 - Desktop adapters:
-  - macOS: update `networksetup` proxy bypass domains
-  - Windows: update WinINET `ProxyOverride`
+  - macOS: update `networksetup` proxy bypass domains, including `100.100.100.100`
+  - Windows: update WinINET `ProxyOverride`, including `100.100.100.100`
   - Linux: no automatic proxy-bypass mutation
 
 Self-recovery command after Clash Verge reinstall or runtime drift:

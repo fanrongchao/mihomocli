@@ -17,14 +17,19 @@ use tracing_subscriber::EnvFilter;
 
 const SAFE_FAKE_IP_RANGE: &str = "172.19.0.1/16";
 const TAILSCALE_BASE_FAKE_IP_BYPASS: [&str; 2] = ["+.tailscale.com", "+.ts.net"];
-const TAILSCALE_ROUTE_EXCLUDES: [&str; 2] = ["100.64.0.0/10", "fd7a:115c:a1e0::/48"];
-const TAILSCALE_BASE_DIRECT_RULES: [&str; 4] = [
+const TAILSCALE_ROUTE_EXCLUDES: [&str; 3] = [
+    "100.64.0.0/10",
+    "100.100.100.100/32",
+    "fd7a:115c:a1e0::/48",
+];
+const TAILSCALE_BASE_DIRECT_RULES: [&str; 5] = [
     "DOMAIN-SUFFIX,tailscale.com,DIRECT",
     "DOMAIN-SUFFIX,ts.net,DIRECT",
+    "IP-CIDR,100.100.100.100/32,DIRECT",
     "IP-CIDR,100.64.0.0/10,DIRECT",
     "IP-CIDR6,fd7a:115c:a1e0::/48,DIRECT",
 ];
-const TAILSCALE_SYSTEM_PROXY_BYPASS_BASE: [&str; 1] = ["100.64.0.0/10"];
+const TAILSCALE_SYSTEM_PROXY_BYPASS_BASE: [&str; 2] = ["100.64.0.0/10", "100.100.100.100"];
 
 #[derive(Parser)]
 #[command(
@@ -3626,9 +3631,10 @@ rules:
         assert_eq!(cfg.rules[0], "DOMAIN-SUFFIX,tail.zhsjf.cn,DIRECT");
         assert_eq!(cfg.rules[1], "DOMAIN-SUFFIX,tailscale.com,DIRECT");
         assert_eq!(cfg.rules[2], "DOMAIN-SUFFIX,ts.net,DIRECT");
-        assert_eq!(cfg.rules[3], "IP-CIDR,100.64.0.0/10,DIRECT");
-        assert_eq!(cfg.rules[4], "IP-CIDR6,fd7a:115c:a1e0::/48,DIRECT");
-        assert_eq!(cfg.rules[5], "MATCH,Proxy");
+        assert_eq!(cfg.rules[3], "IP-CIDR,100.100.100.100/32,DIRECT");
+        assert_eq!(cfg.rules[4], "IP-CIDR,100.64.0.0/10,DIRECT");
+        assert_eq!(cfg.rules[5], "IP-CIDR6,fd7a:115c:a1e0::/48,DIRECT");
+        assert_eq!(cfg.rules[6], "MATCH,Proxy");
     }
 
     #[test]
@@ -3647,6 +3653,7 @@ rules:
                 "DOMAIN-SUFFIX,tail.example.com,DIRECT".to_string(),
                 "DOMAIN-SUFFIX,tailscale.com,DIRECT".to_string(),
                 "DOMAIN-SUFFIX,ts.net,DIRECT".to_string(),
+                "IP-CIDR,100.100.100.100/32,DIRECT".to_string(),
                 "IP-CIDR,100.64.0.0/10,DIRECT".to_string(),
                 "IP-CIDR6,fd7a:115c:a1e0::/48,DIRECT".to_string()
             ]
@@ -3685,6 +3692,7 @@ rules:
                 "DOMAIN-SUFFIX,tail.example.com,DIRECT".to_string(),
                 "DOMAIN-SUFFIX,tailscale.com,DIRECT".to_string(),
                 "DOMAIN-SUFFIX,ts.net,DIRECT".to_string(),
+                "IP-CIDR,100.100.100.100/32,DIRECT".to_string(),
                 "IP-CIDR,100.64.0.0/10,DIRECT".to_string(),
                 "IP-CIDR6,fd7a:115c:a1e0::/48,DIRECT".to_string()
             ]
@@ -3704,6 +3712,7 @@ rules:
             vec![
                 "*.corp.example.com".to_string(),
                 "*.tail.zhsjf.cn".to_string(),
+                "100.100.100.100".to_string(),
                 "100.64.0.0/10".to_string(),
                 "airs.zhsjf.cn".to_string(),
             ]
@@ -3734,7 +3743,7 @@ rules:
     fn parse_windows_proxy_override_splits_semicolon_list() {
         let raw = r#"
 HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Internet Settings
-    ProxyOverride    REG_SZ    localhost;<local>;100.64.0.0/10;airs.zhsjf.cn
+    ProxyOverride    REG_SZ    localhost;<local>;100.64.0.0/10;100.100.100.100;airs.zhsjf.cn
 "#;
 
         assert_eq!(
@@ -3743,6 +3752,7 @@ HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Internet Settings
                 "localhost".to_string(),
                 "<local>".to_string(),
                 "100.64.0.0/10".to_string(),
+                "100.100.100.100".to_string(),
                 "airs.zhsjf.cn".to_string(),
             ]
         );
