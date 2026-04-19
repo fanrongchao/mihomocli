@@ -243,6 +243,19 @@ two layers:
   - Windows: sync tailnet-only hostnames plus `100.100.100.100` into WinINET `ProxyOverride`
   - Linux: no automatic system-proxy mutation (no single desktop-wide standard)
 
+Why this matters:
+
+- Some native desktop apps do not reliably honor `HTTP_PROXY` / `HTTPS_PROXY`
+  or the desktop HTTP proxy settings. In practice they may only start working
+  once Clash/Mihomo `tun` mode is enabled.
+- Once `tun` is enabled, Clash often sees the traffic first. If tailnet-only
+  hostnames or Tailscale service addresses are not explicitly carved out,
+  traffic that should have gone to `utun` can be intercepted by Clash before
+  Tailscale gets a chance to handle it.
+- Coexistence therefore needs both layers: Mihomo `DIRECT` + route exclusions
+  for tailnet traffic, and desktop proxy bypass entries so browsers and other
+  system clients do not forward those same hostnames back into the local proxy.
+
 Typical output:
 
 ```

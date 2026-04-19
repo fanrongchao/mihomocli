@@ -220,6 +220,67 @@ adapters:
   - Windows: update WinINET `ProxyOverride`, including `100.100.100.100`
   - Linux: no automatic proxy-bypass mutation
 
+Why `tun` still matters for some apps:
+
+- Some native desktop apps do not reliably honor `HTTP_PROXY` / `HTTPS_PROXY`
+  or desktop proxy settings. They may only start working once Clash/Mihomo
+  `tun` mode is enabled.
+- That same `tun` interception can break Tailscale-only hostnames if the
+  tailnet CIDRs, service addresses, and hostnames are not explicitly carved
+  out. In other words, Clash can grab the flow before Tailscale sees it.
+- `tailscale-compatible` is intended to solve that coexistence problem by
+  keeping tailnet traffic on the Tailscale side while letting the rest of the
+  machine benefit from `tun`.
+
+Recommended long-term pattern for mixed native-app + tailnet setups:
+
+```yaml
+# ~/.config/mihomocli/app.yaml
+tailscale_compat_defaults:
+  tailnet_suffixes:
+    - example.com
+  direct_domains:
+    - hs.example.com
+    - derp.example.com
+    - admin.example.com
+  route_exclude_address:
+    - 203.0.113.10/32
+```
+
+Use `direct_domains` for internal HTTPS endpoints that are only reachable
+through Tailscale but are not under `tail.<suffix>`.
+
+Troubleshooting: native app works, but tailnet site stops opening
+
+Typical symptom:
+
+- A native app such as Gemini starts working after `tun` is enabled.
+- A tailnet-only site such as `admin.example.com` or `https://host.tail.example.com`
+  stops opening in the browser.
+
+What to check:
+
+1. Confirm the hostname resolves to a Tailscale address such as `100.x.y.z`.
+2. Confirm your generated config contains:
+   - a `DIRECT` rule for the hostname or suffix
+   - `tun.route-exclude-address` entries for `100.64.0.0/10`,
+     `100.100.100.100/32`, and `fd7a:115c:a1e0::/48`
+3. On macOS/Windows, confirm the hostname is also present in the desktop proxy
+   bypass list. A Mihomo `DIRECT` rule alone is not always enough for browser
+   traffic if the browser first hands the request to the local HTTP proxy.
+4. Check the Clash/Mihomo service log. If you see lines like
+   `match Domain(... ) using DIRECT` followed by `dial tcp 100.x.y.z:443:
+   i/o timeout`, desktop proxy bypass is a likely missing piece.
+5. Re-run:
+
+```bash
+cd ~/code/mihomocli
+nix develop -c cargo run -p mihomo-cli -- refresh-clash-verge
+```
+
+If your site is not under `tail.<suffix>`, add it to `tailscale_compat_defaults.direct_domains`
+and refresh again.
+
 Self-recovery command after Clash Verge reinstall or runtime drift:
 
 ```bash
