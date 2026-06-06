@@ -368,7 +368,10 @@ mod tests {
     #[test]
     fn home_dir_fallback_uses_config_parent_on_unix_layout() {
         let temp_dir = TempDir::new().unwrap();
-        let paths = create_test_paths(&temp_dir);
+        let paths = AppPaths {
+            config_dir: temp_dir.path().join(".config/mihomocli"),
+            cache_dir: temp_dir.path().join(".cache/mihomocli/subscriptions"),
+        };
 
         assert_eq!(paths.home_dir_fallback(), temp_dir.path().to_path_buf());
     }
